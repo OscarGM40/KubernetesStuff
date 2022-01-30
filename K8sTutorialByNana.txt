@@ -1,0 +1,541 @@
+						K8S TUTORIAL BY NANA
+
+Source: https://www.youtube.com/watch?v=X48VuDVv0do
+
+La primera parte será teórica,explicando qué es Kubernetes,su arquitectura y componentes.
+Despues crearemos un cluster mono-nodo local con minikube,explicaremos qué es kubectl y minikube, y sus comandos principales.
+Veremos un ejemplo de un archivo yaml de config y una demo.
+
+LA segunda parte es más avanzada,veremos como organizar mis componentes gracias a los namespaces,como servir la aplicación con k8s Ingress,aprenderemos sobre el package Manager Helm,sobre como persistir data con Volumes o como usar StatefulSet para unir las databases.
+TAmbién veré los distintos tipos de Services
+
+						WHAT IS KUBERNETES
+
+Kubernetes is an open source container orchestration tool
+Developed by Google
+It helps you manage containerized applications in different deployment environments.
+Hoy en día una app puede estar compuesta de cientos de contenedores.Manejar esto sólo con scripts y/o Docker es extremadamente complejo.Es por esto que salieron las herramientas de orquestación.
+
+Orquestation tools offers High Availability(la aplicación no cae,siempre esta disponible)
+Scalability or high performance
+Disaster recovery -the app can backup and restore again in another server
+
+				OVERWIEW ABOUT COMMON KUBERNETES COMPONENTS
+
+K8s has a ton of componentes but most of the time I will be working with a handful of them.
+
+WORKER NODE
+
+NODE: un Nodo es un Virtual Server o una máquina física.
+
+						POD
+
+POD:es la unidad más pequeña de k8s.Es una abstracción sobre un container,es decir está por encima de un contenedor.Esto es asi porque k8s necesita abstraerse del contenedor y de cualquier tecnologia de containerización(como Docker,Podman,etc) para que yo pueda reemplazarla si quiero.
+
+Yo sólo debo interactuar con la capa de k8s(con el pod),debe darme igual quien lo containeriza.Normalmente se ejecuta un contenedor por pod
+
+Cada pod siempre tiene su propia dirección IP(no el contenedor,sino el Pod).Obviamente será una IP interna.Asi pues dos pods pueden comunicarse mediante la IP que se les otorgará.
+Lamentablemente mueren muy rápido y son muy efímeros.Si uno muere otro le sustituirá y tendrá otra IP diferente asi que comunicarse mediante las IP de los Pods,no es buena idea.Debido a esto se usa otro componente llamado Service
+
+						SERVICE & INGRESS
+
+Un Service es básicamente una IP permanente estática que puede ser enlazada a un Pod(entre otros componentes).El ciclo de vida de un Pod y un Service no está conectado,asi que si un Pod muere el Service quedará alli.
+Básicamente es la forma de comunicar y otorgar IPs a los componentes en k8s.
+
+* Para que mi app sea accesible desde el navegador tengo que crear un External Service.Obviamente no quiero que un Pod con una DB sea accesible asi que ese tendrá un Internal Service.Cuando se crea un Service tengo que elegir un tipo.
+
+La IP que me otorga un External Service es un socket tipo http://124.89.101.2:8080lo cual no es muy práctico.Para solucionar esto tengo otro componente de k8s llamado Ingress.El Ingress redireccionará la Ip hacia un dominio
+
+						CONFIGMAP & SECRET
+
+Un componente ConfigMap normalmente contiene datos de configuración como la URL de la database o cualquier otro dato en forma de clave-valor.
+El ConfigMap está conectado al Pod de forma que estos valores son suministrados al POD automáticamente.
+Otros datos más sensibles como el Username o la Password del User de la DB usarán el componente Secret.Un Secret está encriptado en Base64(a diferencia de un ConfigMap,que es texto plano).Son lo mismo,pero uno encripta lo que guarde en él y otro no
+Puedo introducirlos desde la CLi,desde un properties file,etc...
+
+							VOLUMES
+
+La forma que tiene k8s de guardar los datos y persistirlos es mediante Volumes.
+Básicamente enlaza un almacenamiento físico en un disco duro a mi Pod.Este almacenamiento puede estar en una máquina local(dentro del cluster)  o puede estar en remoto,fuera del cluster de kubernetes
+En cuanto un Pod tenga un Volumen enlazado si se reinicia cargará los datos de alli,no sufriendo pérdida de datos.
+Recuerda de k8s no maneja ningun tipo de persistencia de datos,yo soy el responsable de ello.
+
+					DEPLOYMENT & STATEFUL SET
+
+Tal como tenemos ahora la app si el Pod cayerá habría un downtime en el que el usuario no podría interactuar con la App.Un concepto core de Kubernetes es que tendré varios Nodes con la aplicación replicada.Una copia de la app será servida inmediatamente al usar kubernetes(normalmente hay 3 nodes minímo luego tengo 3 copias o clones).
+IMPORTANTE: cada Pod replicado en cada Node está conectado al mismo Service,con lo que todo concuerda si cae uno se sirve otro,pues ya está conectado.No sabía esto,si que es potente Kubernetes.
+Asi pues un Service tiene dos funcionalidades,tener una IP estática ,pero también es un load balancer entre los Pods.Un Service captura la request y la balanceará al cualquier Pod que esté libre según ciertos criterios
+
+A la hora de empezar a replicar no se levanta un segundo Pod directamente.Lo que se hace es definir desde un principio un blueprint de ese Pod y despues se especifican las replicas.Este plano o modelo de como luce un determinado Pod es el DEPLOYMENT.En la práctica no se crean Pods,sino Deployments y luego se especifica el número de replicas
+Con todo esto se puede decir que un Deployment es otra capa de abstracción sobre el POd,que asi mismo lo era sobre un contenedor
+
+Si especificará un Deployment con 2 replicas y un Pod cae el service hara load balancing hacia ese segundo POd,que estaba ya conectado mediante ese Service.
+
+En cuanto a un POd con una DB sucede lo mismo,debo replicarla ya que es la base de k8s,tener varias copias de la app.
+IMPORTANTE: Sin embargo una DB no puede ser replicada mediante un Deployment,ya que tiene un State.Si replicará varias DB deberían saber que POD está activo,qué Pod esta leyendo,guardando,borrando,...ESto da lugar a inconsistencia de datos.Para evitar esto un Pod con una DB se crea con StatefulSet.
+Un StatefulSet se usa para Apps con StateFull.Una App Statefull es MySQL,MongoDB,ElasticSearch).
+No es fácil configurar un StatefulSet,asi que es muy común tener la DB afuera del cluster de k8s,creando sólo Stateless Apps.
+
+Si ahora cayera el Nodo 1 el NOdo 2 tiene un clon de la app,el cual serviría automáticamente,evitando asi el downtime por parte del user(concepto core de High Availability).
+
+					BASIC ARQUITECTURE OF KUBERNETES
+
+Kubernetes trabaja con nodos master y nodos slave.Probablemente su componente más importante sea el nodo o esclavo.
+
+Cada Worker Node tiene(o puede tener) múltiples Pods corriendo en en él.
+También se les llama Workers porque hacen el trabajo pesado de correr la app.
+
+3 procesos deben ser instalados en cada Nodo Esclavo:
+  1- el primero es el container runtime o el ejecutor de contenedores.Puede ser Docker,containerD u otro.Realmente esto leno importa a K8s
+  2- kubelet es el proceso de k8s que interactua entre el Nodo y este container runtime,es el nexo entre Docker y Kubernetes,básicamente.Kubelet arranca los pods,los para,asigna recursos del nodo segun la demanda de ese contenedor,
+  3- kubeproxy es el tercer proceso: kubeproxy forwardea las peticiones,por ejemplo si un pod en el nodo1 quiera acceder a su DB kubeproxy va a conectarle a la DB del nodo1,de ese nodo,en vez de a la del nodo 2.De esta forma no sobrecarga la red interna de k8s(fijate que es importante).
+
+IMPORTANTE: cada NOdo Worker tendrá una copia del container runtime,del kubelet,etc y se comunica entre ellos mediante los Services que ya hemos visto que actuan de load balancer además de generar IP estáticas.
+
+Para poder interactuar con el cluster,con estos Workers,por ejemplo monitorizar el cluster,agregarle un nuevo Node,reiniciar un pod,etc existe el Nodo Master
+
+En cada Nodo Master hay 4 procesos ejecutandose:
+
+  1- API Server: básicamente es contra lo que yo como usuario interactuo.Kubernetes ofrece tres clientes para esta API(un dashboard ,una CLI llamada kubectl)
+Puedo ver a la API Server como la salida/entrada del cluster,por la que acceder al cluster.También actua como guardiana para la autenticación,ya que debo estar autenticado para poder acceder al cluster
+Cualquier petición que yo haga pasa por este proceso del Master,y ya luego él lo redirigirá a otros procesos.
+
+ 2- el Scheduler es otro proceso maestro.Él es el encargado de ordenar todo.Si yo interactuo con la API para reiniciar un Pod será el Scheduler el que organize todo,mandando e interactuando con el kubelet de por ejemplo el Worker Node 2.
+Tiene mucha inteligencia y tratará de reducir el consumo de recursos,si un nodo esta al 60% y otro al 20% va a interactuar con ese nodo equilibrando los recursos.
+NOTA:fijate que Scheduler sólo decide qué Nodo va a levantar el Pod pero será el Kubelet del Node el que lo haga.
+
+ 3- el tercero es el Controller Manager: es un componente crucial.Detecta 'state changes' en el cluster.ES decir detecta cualquier cambio(como que muera un Pod).
+El Controller Manager siempre intentará mantener el estado del cluster lo más rápido posible.Para ello informará al Scheduler de que ese Pod murió,el Scheduler calculará el Nodo con menor carga y/o más apropiado y mandará al kubelet que levante el Pod de nuevo.Obviamente es otro proceso vital.
+
+4- el último proceso maestro es etcd,que es la base de datos interna del cluster.Es una base de datos tipo key-value.Cada cambio en el cluster es almacenado en etcd.Es el cerebro del cluster.Guarda el state de la app y gracias a él funciona todo,es obvio pues es la database del cluster.
+Es la DB del cluster,y es sólo para uso interno.Cualquier proceso,Worker,Master tiene acceso a etcd  para poder saber si el cluster está healthy o ha cambiado,etc.
+
+En la práctica un cluster de k8s suele tener mínimo dos Master.Cuando esto sucede los procesos de APIServer de cada Master son balanceados.Asi una vez responderá un Master y la siguiente el otro,balanceando la carga de peticiones.
+Obviamente la DB etcd es compartida entre ellos(usa almacenamiento distribuido)
+
+En un ejemplo realístico minimo se tienen dos master y tres nodos(teniendo así tres clones).Fijate que los Workers necesitarán mas CPU,RAM y STORAGE que los master,que consumen menos
+
+Según sea más compleja la app puedo terminar con 3 master y 6 nodos perfectamente.Investigar más sobre esto.Tener este setup crea un cluster mas robusto y poderoso,a pesar del consumo de recursos.
+
+NOTA:si quiero añadir un Master o un Node simplemente tendría que:
+1- obtener un bare server
+2- instalar los procesos correspondientes
+2- añadirlo al cluster
+
+				MINIKUBE Y KUBECTL -LOCAL SETUP -
+
+Dado que en un cluster en producción tendré minimo 4 máquinas no podré simular esto en una máquina local.
+
+** Minikube es una herramienta open-source mono-nodo con todos los procesos de un master y un worker.Este Nodo tiene Docker pre-instalado(si uso minikube) asi que el container runtime será Docker Engine
+Minikube correrá en mi máquina mediante un hypervisor(VirtualBox por defecto??).
+Es decir,que Minikube creará un VirtualBox en mi ordenador y los Nodos correrán en esa VirtualBox.
+En definitiva Minikube es un cluster mono-nodo que corre mediante un hypervisor como VirtualBox en mi ordenador.Se usa para testing. 
+
+** Ahora que ya tengo ese cluster tengo que interactuar con él.La forma de hacerlo será mediante KUBECTL.Es una CLI que interactuará con el API Server del master
+Kubectl permite realizar casi cualquier operación
+
+Recuerda que Kubectl puede apuntar a cualquier cluster,tanto local como remoto.
+Y recuerda que Minikube necesita la activar la virtualización del SO y que ya instalará Kubectl como dependencia.
+
+>brew install hyperkit <- ella instala el hipervisor 'hyperkit'.
+>brew install minikube 
+>minikube start --vm-driver=hyperkit <- crea un cluster con este hipervisor.
+
+>kubectl get nodes <- debería ver ese cluster llamado minikube
+
+>minikube status <-puedo ver también los procesos
+type: Control Plane
+host: Running
+kubelet: Running
+apiserver: Running
+kubeconfig: Configured
+Puedo ver que kubelet y apiserver están running,todo está OK
+
+>kubectl version <-puedo comprobar las versiones del cliente y la api.
+
+Desde ahora interactuaré con kubectl,minikube es solo para crear,borrar,parar y arrancar el cluster,reasignarle recursos,etc.Para interactuar con el cluster usaré kubectl.
+Nana pondrá todos los comandos en la sección de comentarios.
+
+		COMANDOS ÚTILES PARA MINIKUBE Y GESTIÓN DE CLUSTERS LOCALES
+
+NOTA:minkikube permite crear varios clusters,e incluso con varios nodos(si bien por defecto crea un cluster mononodo llamado minikube).
+
+Este comando(minikube profile list) es fundamental,me dará visión sobre todos los clusters que tengo
+
+>minikube profile list
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesTutorialByNana$ minikube profile list
+|----------|-----------|---------|--------------|------|---------|---------|-------|
+| Profile  | VM Driver | Runtime |      IP      | Port | Version | Status  | Nodes |
+|----------|-----------|---------|--------------|------|---------|---------|-------|
+| minikube | docker    | docker  | 192.168.49.2 | 8443 | v1.20.7 | Stopped |     1 |
+
+NOTA:para ver el cluster activo,y por ende,a cual borraré,debo usar minikube profile(sin argumentos):
+minikube profile:
+multinode <- estoy usando el multinode luego minikube delete borrará este cluster
+
+* Puedo crear más cluster,con el nombre,driver,cpus,etc que quiera,con la flag -p y el nombre + las opciones:
+>minikube start -p <clusterName> [--driver=docker --nodes=2]
+
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesTutorialByNana$ minikube profile list
+|-----------|-----------|---------|--------------|------|---------|---------|-------|
+|  Profile  | VM Driver | Runtime |      IP      | Port | Version | Status  | Nodes |
+|-----------|-----------|---------|--------------|------|---------|---------|-------|
+| minikube  | docker    | docker  | 192.168.49.2 | 8443 | v1.20.7 | Stopped |     1 |
+| multinode | docker    | docker  | 192.168.58.2 | 8443 | v1.20.7 | Running |     2 |
+
+* Para borrarlo puedo usar minikube delete(ojo que borra el activo):
+>minikube delete <- ojo que borra el cluster minikube
+
+* Puedo aumentar los recursos con <minikube start <clusterName> --cpus=6 --memory=8000>
+* Puedo abrir el cluster a la red con (--listen-address):
+>minikube start minikube --listen-address=0.0.0.0
+
+Y por último para cambiar de cluster<minikube profile <clusterName>:
+
+
+				COMANDOS ÚTILES - MAIN KUBECTL COMMANDS
+
+Una vez arrancado el cluster usaré kubectl para casi todo.Puedo empezar por ver los pods,services,nodes,deploys,namespaces,en resumen cualquier recurso.Creemos un recurso(recuerda que para crear lo que sea tengo a kubectl create --help)
+
+NOTA:recuerda que Docker y K8s están escritos en Go.
+>kubectl create --help
+Available Commands:
+  clusterrole         Create a ClusterRole.
+  clusterrolebinding  Create a ClusterRoleBinding for a particular ClusterRole
+  configmap           Create a configmap from a local file, directory or literal value
+  cronjob             Create a cronjob with the specified name.
+  deployment          Create a deployment with the specified name.
+  ingress             Create an ingress with the specified name.
+  job                 Create a job with the specified name.
+  namespace           Create a namespace with the specified name
+  poddisruptionbudget Create a pod disruption budget with the specified name.
+  priorityclass       Create a priorityclass with the specified name.
+  quota               Create a quota with the specified name.
+  role                Create a role with single rule.
+  rolebinding         Create a RoleBinding for a particular Role or ClusterRole
+  secret              Create a secret using specified subcommand
+  service             Create a service using specified subcommand.
+  serviceaccount      Create a service account with the specified name
+
+Puedo ver que puedo crear de todo,configmap,secret,service,deployment,jobs,role,un ingress,un cronjob,...Impresionante.
+
+NOTA:fijate que no puedo crear un pod.ESto es porque tengo que usar la abstraction layer Deployment,que es una abstracción sobre los Pods.
+Asi que el comando será:
+kubectl create deployment <name> --image=image [options]
+
+Creemos un simple nginx:
+kubectl create deployment nginx-depl --image=nginx
+
+Si ahora miro los pods veré que hay uno con el nombre del deploy + random hash:
+nginx-depl-5c8bf76b5b-9c8lf            1/1     Running   0          19s
+
+IMPORTANTE:recuerda que un Deployment es como un plano o una clase,tiene lo necesario para crear pods en base a él.Sin embargo,entre un Pod y un Deploy realmente hay otra capa de abstracción llamada ReplicaSet.Es una capa gestionada totalmente por k8s,pero aún asi puedo verla:
+
+>k get replicaset
+NAME                             DESIRED   CURRENT   READY   AGE
+api-deployment-7c6b7f68d         2         2         2       217d
+client-deployment-64c6fd755      2         2         2       217d
+mongodb-deploy-5f86f47cd         1         1         1       216d
+nginx-depl-5c8bf76b5b            1         1         1       3m19s
+>k get replicaset -o wide 
+NAME                             DESIRED   CURRENT   READY   AGE     CONTAINERS          IMAGES                    SELECTOR
+api-deployment-7c6b7f68d         2         2         2       217d    api                 fhsinchy/notes-api        component=api,pod-template-hash=7c6b7f68d
+client-deployment-64c6fd755      2         2         2       217d    client              fhsinchy/notes-client     component=client,pod-template-hash=64c6fd755
+mongodb-deploy-5f86f47cd         1         1         1       216d    mongodb-container   de13/mongo-myapp          app=db,pod-template-hash=5f86f47cd
+nginx-depl-5c8bf76b5b            1         1         1       5m32s   nginx               nginx                     app=nginx-depl,pod-template-hash=5c8bf76b5b
+
+Si hago un output completo veré includo las imagenes.Si le hago un output completo a los pods veré las Ips temporales:
+>k get pods -o wide
+mongodb-deploy-5f86f47cd-9vr4v         1/1     Running   50         216d   172.17.0.4    minikube   <none>           <none>
+nginx-depl-5c8bf76b5b-9c8lf            1/1     Running   0          5m7s   172.17.0.13   minikube   <none>           <none>
+Puedo ver que mi pod ha cogido la 172.17.0.13 de momento.
+
+IMPORTANTE: el componente ReplicaSet básicamente controla las replicas de un Pod,en la práctica yo no interactuaré con él,sino con el Deployment.
+Asi pues podemos acordar que hay 4 capas de abstracción: Deployment>ReplicaSet>Pod>Container
+
+							EDITAR OBJETOS DE KUBERNETES
+
+Puedo editar cualquier recurso  con kubectl edit (RESOURCE/NAME | -f FILENAME) [options]):
+
+Examples:
+# Edit the service named 'docker-registry':
+kubectl edit svc/docker-registry
+  
+# Use an alternative editor
+KUBE_EDITOR="nano" kubectl edit svc/docker-registry
+  
+# Edit the job 'myjob' in JSON using the v1 API format:
+kubectl edit job.v1.batch/myjob -o json
+  
+# Edit the deployment 'mydeployment' in YAML and save the modified config in its annotation:
+kubectl edit deployment/mydeployment -o yaml --save-config
+
+Puedo editar services o deployments,elegir json o yaml,el editor,...
+
+Asi pues edito el deployment con:
+>kubectl edit deployment nginx-depl
+NOTA:kubernetes crea estos archivos de configuración,lo creó en el momento que creé el deployment con kubectl create deployment <name> --image=image
+
+Al abrirlo para editar puedo cambiarle por ejemplo la versión de la imagen,y logicamente se levantara el pod de nuevo:
+nginx-depl-5c8bf76b5b-9c8lf            0/1     Terminating   0          21m
+nginx-depl-7fc44fc5d4-jxdlp            1/1     Running       0          10s
+Por el hash además puedo ver que se cambió a otra ReplicaSet el control.
+
+Puedo ver también que la replicaset anterior ya no tiene pods en ella:
+nginx-depl-5c8bf76b5b            0         0         0       23m
+nginx-depl-7fc44fc5d4            1         1         1       2m30s
+
+Puedo apreciar la potencia de kubernetes manejando perfectamente hasta la última feature.
+
+							DEBUGGING PODS (kubectl logs [pod] | kubectl describe pod [pod] | kubectl exec -ti [pod] /bin/bash)
+
+Para debuggear tengo varios comandos posibles.El primero es kubectl logs [pod name]:
+>k logs --tail=20 nginx-depl-7fc44fc5d4-jxdlp <- ver sólo las últimas 20 líneas.
+Fijate que no veo nada porque no está emitiendo nada 
+ASi que tomaré otro contenedor como una base de datos:
+
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesTutorialByNana$ k logs --tail=20 postgres-deployment-6978dfbb77-c8lsf
+
+PostgreSQL Database directory appears to contain a database; Skipping initialization
+
+2022-01-29 18:44:42.207 UTC [1] LOG:  starting PostgreSQL 12.3 (Debian 12.3-1.pgdg100+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 8.3.0-6) 8.3.0, 64-bit
+2022-01-29 18:44:42.208 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2022-01-29 18:44:42.208 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2022-01-29 18:44:42.210 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2022-01-29 18:44:42.243 UTC [25] LOG:  database system was shut down at 2022-01-28 20:55:58 UTC
+2022-01-29 18:44:42.274 UTC [1] LOG:  database system is ready to accept connections
+
+Puedo ver por los logs que la db esta activa y esperando en el puerto 5432.
+NOTA:otro comando muy importante es kubectl describe pod [pod name]
+>k describe pod nginx-depl-7fc44fc5d4-jxdlp | less -R
+
+Events:
+  Type    Reason     Age   From               Message
+  ----    ------     ----  ----               -------
+  Normal  Scheduled  15m   default-scheduler  Successfully assigned default/nginx-depl-7fc44fc5d4-jxdlp to minikube
+  Normal  Pulling    15m   kubelet            Pulling image "nginx:1.16"
+  Normal  Pulled     15m   kubelet            Successfully pulled image "nginx:1.16" in 5.254271313s
+  Normal  Created    15m   kubelet            Created container nginx
+  Normal  Started    15m   kubelet            Started container nginx
+
+Si bien no pude ver por los logs todo lo puedo ver desde kubectl describe que todo esta perfecto
+Un tercer comando que también es muy importante es simplemente entrar al contenedor con una cli (kubectl exec -ti [pod name] -- bin/bash):
+>k exec -ti nginx-depl-7fc44fc5d4-jxdlp -- bin/bash <- también /bin/bash
+
+								BORRAR RECURSOS
+
+Puedo borrar cualquier recurso con kubectl delete (file | name) [options].Puedo pasarle un file o una stdin, o una regex.Fijate que para borrar un pod realmente debo borrar su deployment.
+  
+# Delete a pod with minimal delay
+kubectl delete pod foo --now
+ 
+# Force delete a pod on a dead node
+kubectl delete pod foo --force
+  
+# Delete all pods
+kubectl delete pods --all
+  
+
+# delete a pod from a file(-f) using the type and name specified in pod.json.
+kubectl delete -f ./pod.json
+
+# Delete pods and services with same names "baz" and "foo"
+kubectl delete pod,service baz foo
+  
+# Delete pods and services with label name=myLabel.
+kubectl delete pods,services -l name=myLabel
+
+Fijate las dos últimas opciones para borrar masivamente.
+Lógicamente si borro un Deploy borrará la replicaset y el pod y la imagen.
+>k delete deployment nginx-depl.
+
+Fijate que en la práctica,memorizar tantos comandos e interactuar tanto con la cli se vuelve muy complejo.Es por ello que realmente se usan archivos de configuración y no comandos.Esto se hace con el comando k apply -f [file name]
+
+				APLICANDO ARCHIVOS DE CONFIGURACIÓN
+
+Fijate que en un config file para un Deployment tendré dos 'spec',uno para el deployment y otro para el pod:
+piVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers: 
+        - name: nginx
+          image: nginx:1.16
+          ports:
+            - containerPort: 80
+
+Ya puedo aplicar el archivo y conseguiré lo mismo que con kubectl create deployment [deploy name] --image=image:
+>k apply -f nginx-deployment.yaml 
+deployment.apps/nginx-deployment created
+
+* Puedo ver que la primera vez lo creará y las sucesivas veces lo re-configurará
+Le hago un cambio,como tener dos replicas.
+>k apply -f nginx-deployment.yaml 
+deployment.apps/nginx-deployment configured <- ya no lo crea
+
+Y ya tiene dos
+nginx-deployment      2/2     2            2           2m35s
+
+Y lógicamente habrá dos pods:
+nginx-deployment-644599b9c9-srpqj      1/1     Running   0          51s
+nginx-deployment-644599b9c9-xfmtm      1/1     Running   0          2m59s
+
+NOTA: y para borrar el recurso puedo hacerlo con kubectl delete -f [file name].
+Esto es justo lo contrario a kubectl apply,con apply lo creo y actualizo,con delete lo borro.
+>k delete -f nginx-deployment.yaml 
+deployment.apps "nginx-deployment" deleted
+
+Perfecto.Ahora Nana va a parar un poco con los comandos y explicar la sintaxis de los archivos de configuración de K8S.
+
+				1h02m YAML CONFIGURATION FILE SINTAX
+
+Realmente los archivos es la forma en la que interactuaré con k8s como dev.Son bastante simples aunque no lo parezca:
+1- Todo archivo de configuración en kubernetes está formado por tres partes.
+   
+   La parte uno es la metadata:
+   metadata:
+     name: nginx-deployment
+     labels:... 
+    
+   La parte dos es la specification(propiedad spec)
+   spec: 
+     replicas: 2
+     template: <- recuerda que un Deploy lleva un template para el pod
+
+IMPORTANTE: Las dos primeras lineas(apiVersion y kind simplemente especifican qué es lo que quiero crear)
+NOTA: dentro de la specification los atributos son especificos al kind,a lo que estoy creando(Deployment tendrá template por ejemplo mientras que Service tiene ports)
+
+Bien,y donde está la tercera parte?La tercera parte es el STATUS,y va a ser automáticamente generado y añadido por Kubernetes.
+NOTA: Kubernetes siempre compara el estado deseado con el estado actual del cluster(recuerda que lo hace el controller manager).
+
+IMPORTANTE:esto es la base de la feature auto-healing.Por cierto,puedo ver el status con kubectl edit <resource>(KUBE_EDITOR="editor):
+>KUBE_EDITOR="nano" kubect edit deployment nginx-deployment
+
+status:
+   availableReplicas: 2
+   conditions:
+   - lastTransitionTime: "2022-01-30T17:54:54Z"
+     lastUpdateTime: "2022-01-30T17:54:54Z"
+     message: Deployment has minimum availability.
+     reason: MinimumReplicasAvailable
+     status: "True"
+     type: Available
+   - lastTransitionTime: "2022-01-30T17:54:47Z"
+     lastUpdateTime: "2022-01-30T17:54:54Z"
+     message: ReplicaSet "nginx-deployment-644599b9c9" has successfully progressed.
+     reason: NewReplicaSetAvailable
+     status: "True"
+     type: Progressing
+   observedGeneration: 1
+   readyReplicas: 2
+   replicas: 2
+   updatedReplicas: 2
+Puedo ver perfectamente que kubernetes agregó el status.
+IMPORTANTE: Kubernetes obtiene el status de la DB interna etcd,obviamente lo guarda y recupera constantemente.
+Nana recalca que la identación de un yaml es muy estricta y que es buena práctica guardar estos config files con el propio código
+
+							TEMPLATE PARA UN POD
+
+Recuerda que un Deployment siempre va a necesitar en la spec la template para crear un pod,la receta.
+Esta template también tiene sus zonas 'metadata' y 'spec'.Básicamente es otro config file dentro de un config file.Y tiene mucho sentido ya que un Deployment es como dos componentes,el propio Deployment y el Pod.
+Esta zona interna llamada 'template' es lo que configurará el Pod.
+Puedo ver esto como que el POd tiene su propio archivo de configuración,pero está embebido en la propieda template de la spec de un Deployment.
+
+			LABELS & SELECTORS -CONNECTING DEPLOYS WITH SERVICES
+
+LA forma en la que se van a conectar los Deploys y los Services es mediante las propiedades labels y selector.
+La sección metadata siempre contendrá la propiedad 'labels' y la sección specification es la encargada de albergar la prop 'selector'
+A Labels tendré que darle cualquier key-value pair.Ejemplo:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels: 
+    app: nginx <- este es el nombre del Deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx <- cualquier POd llamado asi es de este Deploy
+  template:
+    metadata:
+      labels:
+        app: nginx <- nombre para el Pod
+    spec:
+
+La parte de selector.matchLabels junto con la de template.metadata.labels es fundamental.La segunda da un nombre al POD y con la primera básicamente le estoy diciendo que cualquier Pod con la label que haga match contra matchLables es suyo,pertenece al Deploy.De esta forma el Deploy sabe en cada Nodo que Pod es suyo.
+
+Por otra parte el propio Deploy también tiene un nombre(metadata.labels),pero este nombre es para el Service y debe coincidir con el selector de un Service.TAmbién lo debe hacer el metadata.labels del template para el POD.
+De esta forma el Service sabe a quién tiene que darle conectividad con esa IP estática:
+
+							MATCHING PORTS
+
+Otra parte fundamental será hacer coincidir los puertos.Fijate que en la template de un POD tendré los ports(en la zona specs):
+  template:
+    metatada:
+      labels:
+        app: nginx
+    spec:
+      containers: 
+        - name: nginx
+          image: nginx:latest
+          ports: 
+            - containerPort: 8080
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx <-este debe hacer match
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+
+La forma en que esto funciona es que cada Service tiene un puerto mediante el que es accesible(port),pero debe saber a qué POD tiene que dirigir la request.Esto lo sabe mediante la propiedad targetPort(8080) que debe hacer match con el containerPort del POD,YA QUE el pod sale por el 8080.
+NOTA:casi todas(o todas) estas propiedades son requeridas,asi que son la configuración mínima.
+
+En este punto creo los dos files.Fijate que la output wide me dice los selectores del service:
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesTutorialByNana$ k get services -o wide
+NAME            TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE   SELECTOR
+kubernetes      ClusterIP   10.96.0.1       <none>        443/TCP   61m   <none>
+nginx-service   ClusterIP   10.106.166.15   <none>        80/TCP    23s   app=nginx
+Podria saber si está apuntando bien con kubectl describe service nginx-service
+
+TargetPort:        8080/TCP
+Endpoints:         172.17.0.3:8080,172.17.0.4:8080
+
+Y los pods justo tienen esas IPs
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesTutorialByNana$ k get pods -o wide
+NAME                               READY   STATUS    RESTARTS   AGE    IP           NODE       NOMINATED NODE   READINESS GATES
+nginx-deployment-f4b7bbcbc-9g4fn   1/1     Running   0          102s   172.17.0.4   minikube   <none>           <none>
+nginx-deployment-f4b7bbcbc-tjxkb   1/1     Running   0          102s   172.17.0.3   minikube   <none>           <none>
+
+NOTA: -o es igual que --output:
+>kubectl get pods --output wide <- lo mismo que -o
+
+						OBTENER EL STATUS DE UN RECURSO
+
+Para poder ver el status auto-gestionado por k8s,aparte de verlo al editarlo puedo simplemente obtenerlo con kubectl get <type> <resource> -o yaml.De nuevo el --output que sea yaml | json:
+>kubectl get deployment nginx-deployment -o yaml > tempFile.yaml <- es buena idea guardar la salida en un file y asi veo bien lo que hace k8s entre bambalinas.
+NOTA: si quisiera usar esta salida como blueprint para otra deploy la mayoría de las propiedades autogeneradas debo borrarlas.Es más bien para lectura.
+
+					COMPLETE DEMO PROJECT
+
+
+
