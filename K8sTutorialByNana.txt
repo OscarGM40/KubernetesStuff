@@ -535,7 +535,294 @@ Para poder ver el status auto-gestionado por k8s,aparte de verlo al editarlo pue
 >kubectl get deployment nginx-deployment -o yaml > tempFile.yaml <- es buena idea guardar la salida en un file y asi veo bien lo que hace k8s entre bambalinas.
 NOTA: si quisiera usar esta salida como blueprint para otra deploy la mayoría de las propiedades autogeneradas debo borrarlas.Es más bien para lectura.
 
-					COMPLETE DEMO PROJECT
+				1h16m COMPLETE DEMO PROJECT
 
+Vamos a deployar dos apps,mongodb y mongo-express.La primera es la db,la segunda es una App UI Web(un cliente Web).
 
+1- Crearé un Pod para MongoDB (mediante un Deploy,claro).Tendré que darle conectividad con un Internal Service(ya que no queremos que se acceda a esta db)
+Fijate que un Service Interno(un ClusterIP) no va a permitir realizar ninguna request salvo a otros Pods en el mismo cluster(y desde diferentes namespaces??).
+Usaremos un Secret para guardar las credenciales
+2- Crearé otro Pod con Mongo Express,con un Secret | ConfigMap para las credentials.Tendrá un External Service(NodePort).Esto me dejará acceder mediante la IP del cluster+el portdelNodePort.
 
+Resumen del workflow: en el browser saldrá la app por IP:port.De ahi entrá al external Service que redirige al pod MOngo-Express.Éste a su vez sse comunica con el Internal Service que redirige al pod con el MOngoDB container.Mediante el Secret se autenticará ese user.Manos a la obra pues,asinto:
+
+NOTA: ciertos contenedores necesitarán de variable de entorno(sobre todo las DB).En este caso tengo que definir MONGO_INITDB_ROOT_USERNAME y MONGO_INITDB_ROOT_PASSWORD al menos.
+
+Realmente no tiene mucha ciencia,se pasan en la propiedad spec.env que es un arreglo:
+template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:4.2.1
+        ports:
+        - containerPort: 27017 # debo exponer el puerto 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          value: "admin"
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          value: "admin"
+
+Sin embargo,este file se subirá a un repo,luego es mala idea subir los valores ahi mismo.Crearemos un secret(recuerda que van en base64).
+De esta forma el value vivirá en el cluster,y no en el repositorio:
+
+IMPORTANTE: de igual forma que con otros recursos,lo mejor es crearse un archivo,de esta forma sabré que en este proyecto se creó un Secret en el cluster.
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongodb-secret
+  namespace: default
+type: Opaque
+data:
+  username: YWRtaW4=
+  password: YWRtaW4=
+
+Realmente no tiene nada,pero recuerda que hay varios tipos de Secret(no asi con los ConfigMap),asi que tengo que decirle que es de type: Opaque(en este caso).
+Para saber el valor de un string en base64 debo usar <echo -n>.Ojo,con -n le quito el salto de linea o trailing space.Es obligatorio:
+echo -n "username" | base64 | pbcopy
+echo -n "password" | base64 | pbcopy
+
+NOTA: para copiar fuera de vim tengo que tener +clipboard en vez de -clipboard.Puedo ver esto con vim --version
+Si no lo tengo activo tengo que editar el ~/.vimrc añadiendo:
+set clipboard=unnamed (unnamed plus dicen otros).Mejor usar lo siguiente:
+Al parecer tuve que instalar vim-gui-common que ya activa tanto el +clipboard como el +xterm_clipboard
+Ahora puedo copiar al portapapeles con "+y + lo que quiera.Soy un puto Dios.
+
+Bien,ahora aplico el secret.Obviamente debo tener el secret en el cluster antes de aplicar el deploy del pod que lo referencia:
+k apply -f mongo-secret.yaml
+<secretName> secret created
+
+Fijate que el secreto pueden ser varios pares clave-valor:
+>k describe secret mongodb-secret
+Name:         mongodb-secret
+Namespace:    default
+Labels:       <none>
+Annotations:  <none>
+
+Type:  Opaque
+
+Data
+====
+password:  8 bytes
+username:  8 bytes
+
+Oviamente nunca me va a decir el valor,pero sé que tengo un secret con username y password como keys.Ahora al usar environments variables en vez de usar value uso valueFrom y será secretKeyRef,el name es el name del Secret y la key lo que haya guardadao:
+env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom: 
+            secretKeyRef:
+              name: mongodb-secret
+              key: username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom: 
+            secretKeyRef:
+              name: mongodb-secret
+              key: password
+
+* Al final puse en vez de username y password algo más complejo.Fijate que aplicar el archivo de nuevo lo edita.
+NOTA:puedo quedarme mirando a un recurso con la flag --wath:
+>kubectl get pods --watch
+Como siempre puedo hacer un k describe o k logs si hubiera problemas(recuerda es k logs no get logs)
+
+Bien,obviamente cualquier Deploy sin un Service no es nada,asi que vamos a crear su Service,que al ser una db es de tipo interno por motivos obvios.El mismo file nos servirá:
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+spec:
+  selector: 
+    app: mongodb <- el name del Deploy
+  type: ClusterIP <- ya lo iba a ser asi pero es gratis escribir
+  ports:
+    - protocol: TCP
+      port: 80 <- el port del Service
+      targetPort: 27017 el port al que apunta,que deberá exponer el Pod
+      nodePort: 30007 <- solo para el type NodePort,es el puerto que expondrá hacia afuera del cluster(solo rangos del 30000 al 32767)
+
+NOTA:un Service puede hacer load Balancing a un Pod que exponga varios puertos,en este caso hay que darles un name(ports.name será añadido).
+
+Perfecto,aplico el archivo y el Pod ya será accesible por sus hermanitos.Fijate que k8s es tan inteligente que sabrá que el Deployment no ha cambiado:
+>k apply -f mongo.yaml 
+deployment.apps/mongodb-deployment unchanged
+service/mongodb-service created
+
+NOTA: puedo grepear por una palabra para sacar sólo lo que me interesa.Por ejemplo,todo lo que incluya 'mongo':
+>kubectl get all | grep mongo
+
+Bien,el siguiente paso es crear el pod para mongo-express con su configMap y su External Service(investigar diferencias entre un Load Balancer y un NodePort):
+
+NOTA:mongo-express es una interfaz web que usa Node.Fijate que sale por el 8081 luego el pod debe exponer ese puerto y el Service en su targetPort apuntarlo.
+
+Si sigo mirando en la imagen veré que necesito las env ME_CONFIG_MONGODB_ADMINUSERNAME, ME_CONFIG_MONGODB_ADMINPASSWORD y ME_CONFIG_MONGODB_SERVER <- que será el name del Service que expone la DB.
+ 
+Bien,dado que este archivo va a referenciar el ConfigMap creo primero el ConfigMap para las env:
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-configmap
+  namespace: default
+data:
+  database_url: mongodb-service
+* Recuerda que tanto Secret como ConfigMap usan la propiedad data
+Aplico el deploy y el pod debería mostrarse correctamente:
+k logs <pod> <- veo que la interfaz web levantó correctamente
+
+Hora de crear ese External Service.Para crear un External Service tengo que usar dos propiedades extra,spec.type y spec.ports.nodePort:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-express-service
+  namespace: default
+spec:
+  type: LoadBalancer
+  selector:
+    app: mongo-express
+  ports:
+    - name: port-exposed
+      protocol: TCP
+      port: 8081
+      targetPort: 8081
+      nodePort: 30001
+Aplico el archivo para crear el Service tipo LoadBalancer:
+k apply -f mongo-express.yaml
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesStuff/mongoexpress-demo$ k get services
+NAME                    TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+kubernetes              ClusterIP      10.96.0.1        <none>        443/TCP          27h
+mongo-express-service   LoadBalancer   10.104.116.142   <pending>     8081:30001/TCP   11s
+mongodb-service         ClusterIP      10.105.120.26    <none>        27017/TCP        47m
+
+Puedo ver que se ha creado el Service,y fijate que tiene mucho sentido que un Service se cree por defecto como ClusterIP(cerrado).Los puedo abrir,pero obviamente nacen cerrados.Genial.
+
+No sólo eso,puedo ver que tanto el mongodb-service como el mongo-express-service,los dos tienen una ClusterIP,es decir que le dieron una IP estática al Pod,pero el LoadBalancer también da una ExternalIP,sólo que en minikube se queda en <pending>(en un cluster en la nube ya habría dado una).
+
+Para terminar de abrirlo debo usar minikube service <serviceName>:
+
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesStuff/mongoexpress-demo$ minikube service mongo-express-service
+|-----------|-----------------------|-------------------|---------------------------|
+| NAMESPACE |         NAME          |    TARGET PORT    |            URL            |
+|-----------|-----------------------|-------------------|---------------------------|
+| default   | mongo-express-service | port-exposed/8081 | http://192.168.49.2:30001 |
+|-----------|-----------------------|-------------------|---------------------------|
+  Opening service default/mongo-express-service in default browser...
+
+Incluso abrirá el navegador(fijate que bloquea la consola este comando).
+NOTA:Un Service type NodePort y LoadBalancer usan el mismo rango de puertos(30000 a 32767) en el puerto que abren al exterior del cluster.Investigar más sobre Services.
+
+					1H46 NAMESPACES EXPLAINED
+
+En un cluster de kubernetes puedo organizar mis recursos en namespaces.
+Puedo pensar en un namespace como un cluster virtual dentro de un cluster.
+Cuando cree un cluster kubernetes siempre va a crear 4 namespaces por defecto:
+>kubectl get namespaces:
+NAME              STATUS   AGE
+default           Active   23h
+kube-node-lease   Active   23h
+kube-public       Active   23h
+kube-system       Active   23h
+
+NOTA: el namespace kubernetes-dashboard sólo saldrá cuando agrege el addon.
+1- kube-system: este namespace obviamente no es para mi,no debo crear ni modificar nada.Puedo ver casi todos(o todos los procesos) corriendo aqui,como pods o services:
+k get all -A
+NAMESPACE     NAME                                   READY   STATUS    RESTARTS   AGE
+kube-system   pod/coredns-74ff55c5b-8vmv8            1/1     Running   1          23h
+kube-system   pod/etcd-minikube                      1/1     Running   1          23h
+kube-system   pod/kube-apiserver-minikube            1/1     Running   1          23h
+kube-system   pod/kube-controller-manager-minikube   1/1     Running   1          23h
+kube-system   pod/kube-proxy-4prkc                   1/1     Running   1          23h
+kube-system   pod/kube-scheduler-minikube            1/1     Running   1          23h
+kube-system   pod/storage-provisioner                1/1     Running   3          23h
+
+NAMESPACE     NAME                 TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)                  AGE
+default       service/kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP                  23h
+kube-system   service/kube-dns     ClusterIP   10.96.0.10   <none>        53/UDP,53/TCP,9153/TCP   23h
+
+NAMESPACE     NAME                        DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+kube-system   daemonset.apps/kube-proxy   1         1         1       1            1           kubernetes.io/os=linux   23h
+
+NAMESPACE     NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+kube-system   deployment.apps/coredns   1/1     1            1           23h
+
+NAMESPACE     NAME                                DESIRED   CURRENT   READY   AGE
+kube-system   replicaset.apps/coredns-74ff55c5b   1         1         1       23h
+
+2- kube-public contiene la data accesible pública.
+kubectl cluster-info <- puedo ver la data pública asi.
+
+3- kube-node-lease :es una incorporación reciente.Contiene información sobre:
+ -hearbeats of nodes
+ -determina la disponibilidad de un nodo
+
+4-el último namespace es el namespace 'default'.Todo lo que cree va aqui por defecto(fijate que usar -n | --namespace=default y no usarlo es lo mismo)
+
+* Puedo crear,borrar y cambiarme de namespaces,claro.Para crear un namespace:
+>kubectl create namespace my-namespace
+ namespace/my-namespace created
+>k get namespace
+NAME              STATUS   AGE
+default           Active   23h
+kube-node-lease   Active   23h
+kube-public       Active   23h
+kube-system       Active   23h
+my-namespace      Active   25s <- ya lo veo aqui
+
+* Para borrarlo basta con kubectl delete namespace <name>:
+namespace "my-namespace" deleted
+
+Otra forma de crearlo es con un config file.Es la opción recomendada,ya que queda documentado que he creado un namespace y su nombre:
+
+NOTA:como propiedad hija  de metadata puedo poner namespace: <namespace>.De echo debo ponerla cuando no sea 'default'
+
+Cuando usar namespaces:
+
+1- Organization: Cuando tenga demasiados recursos en el namespace 'default' debería crear más,para organizarme
+
+2- Conflicts with Teams: Cuando haya varios equipos de trabajo,aqui si que hay que tner cuidado porque aplicar un deploy con el mismo nombre que uno existente por otro equipo va a pisar al primero.Es primordial que equipos de trabajo diferentes usen namespaces diferentes.
+
+3- Resource Sharing: Puedo usar un namespace para ElasticSearch o Ingress y compoartir o reusar estos recursos a todo namespace en el cluster.Los recursos comunes deben ir en un namespace
+
+4- Blue/Green Deployment: Se suele usar dos versiones de producciones.La azul es la activa y la verde la que será la siguiente
+
+5- Limitar Acceso a Recursos: otra opción para crear un namespace es limitar su acceso.Puede ser que mi equipo de trabajo sólo tenga acceso a un namespace,de esta forma no interferíremos con otro equipo.
+También se puede limitar según namespace la CPU,RAM y Storage.De esta forma no podrá haber un equipo que se quede con todo
+
+						CARACTERISTICAS DE UN NAMESPACE   
+
+Hay varias features que tengo que tener en cuenta a la hora de crear un namespace:
+1- No podré acceder a la mayoría de recursos de otro namespace(a excepción de los Service).No puedo acceder al configMap de un namespace A desde el B(tengo que crearlo de nuevo).Lo mismo para un Secret.
+Sin embargo si que puedo compartir Services(tendré que llamarle con el namespace + service name)
+data: 
+  db_url: my_namespace.db-service <- puedo llamar desde default a un Service en otro namespace.
+
+Este concepto es la base de porqué puedo usar el Ingress Nginx estando él en un namespace diferente a 'default'(ya que sale por un Service).Lo mismo para elastic Search
+
+2- Hay varios componentes que viven globalmente en el cluster,y son independientes a la abstracción generada por el namespace:
+  A-:Un Node
+  B-:Un Volume
+  C-: Muchos otros,como roles,persistentvolumes,...
+Esto es en parte lógico,pues uando cree un Volumen es a nivel de cluster,cualquiera puede acceder.
+
+NOTA:puedo ver los componentes a nivel de cluster con:
+k api-resources --namespaced=false
+
+Y lo contrario par los que son a nivel de namespace(comandos útiles,asinto):
+k api-resources --namespaced=true (fijate que un pvc es a nivel de namespace y un pv a nivel de cluster).
+
+Para aplicar cualquier comando en base a un namespace tendré que añadir -n | --namespace y el nombre del namespace(que tendrá que existir)
+Recuerda que lo mejor es documentar el namespace desde el config file.
+
+IMPORTANTE: dado que escribir -n <otroNamespace> puede ser muy cansado,puedo usar kubens(ya que kubectl no tiene solución para esto).
+Para instalar kubens tengo que instalar kubectx que lo trae como dependencia.
+1- kubectx is a tool to switch between contexts (clusters) on kubectl faster.
+2- kubens is a tool to switch between Kubernetes namespaces (and configure them for kubectl) easily.
+Instalación: https://github.com/ahmetb/kubectx#installation
+Puedo instalarlo con brew o apt(solo debian)
+sudo apt install kubectx <- para debian
+brew install kubectx <- para mac u otro linux como mi kubuntu
+En este punto instalaré brew(brew está escrito en Ruby&Git y vale para MacOS o cualquier Linux,incluido un WindowsSubsystem Linux)
+Brew es un instalador que no requiere 'sudo' porque instala todo en mi home.
+
+NOTA: kubectx y kubens también tienen un pequeño  modo interactivo(mediante plugins,en el mismo repo dice como).
