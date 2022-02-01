@@ -826,3 +826,220 @@ En este punto instalaré brew(brew está escrito en Ruby&Git y vale para MacOS o
 Brew es un instalador que no requiere 'sudo' porque instala todo en mi home.
 
 NOTA: kubectx y kubens también tienen un pequeño  modo interactivo(mediante plugins,en el mismo repo dice como).
+
+					2h01m K8s INGRESS EXPLAINED
+
+Ya he visto que cuando quiero exponer una app fuera del cluster puedo crear un External Service.Sin embargo esto me dará una IP:Port bajo http.Sólo se usa para testear algo rápido.
+
+Es obvio que el producto final debería ser un dominio.La forma de hacer esto es usando un componente de Kubernetes llamado Ingress Controller.En cuanto use Ingress rules ya tengo que usar un Internal Service + las Ingress rules.
+
+Un archivo de configuración de reglas para el Ingress Controller luce diferente auno para un Service.En él definiré reglas para el routing(del browser al cluster y del cluster al browser):
+
+1- Siempre necesitaré el spec.rules.host,que será un dominio que va a redireccionar hacia el serviceName.Importante,siempre redireccionaré hacia un Internal SERVICE
+
+2- En este ejemplo el dominio es myapp.com.Con la propiedad paths puedo redirigir hacia myapp.com/users o hacia myapp.com/admin.En resumen,en paths tendré todas las subrutas.Hay dos formas de hacer esto.En este ejemplo no hay ninguno definido,luego myapp.com será redirigo a ese Internal Service y ya está(si entrara a myapp.com/admin me va a dar un error).
+
+
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: myapp-ingress
+spec:
+  rules:
+  - host: myapp.com
+    http:
+      paths:
+      - backend:
+          serviceName: myapp-internal-service
+          servicePort: 8080
+
+*NOTA:fijate que deberá existir un Service llamado 'myapp-internal-service(que a su vez apuntará a un POD mediante su targetPort:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp-internal-service <- lógicamente
+spec:
+  selector:
+    app: myapp <- el Deploy
+  ports:
+    - protocol: TCP
+      port: 8080 <- el que expone el service que coincidirá al que apunta la rule      targetPort: 8080 <-el que expone el contenedor del pod
+
+NOTA:el host debe ser un dominio válido.Debe ser resolvible.Y debe apuntar al entrypoint que especifique.
+IMPORTANTE: el entrypoint puede ser incluso un server que le haga proxy al cluster.
+
+					CONFIGURAR INGRESS EN UN CLUSTER
+
+IMPORTANTE: el yaml son sólo las reglas de routing.Escribir un yaml simplemente no va a hacer nada.Lo que tengo que hacer es implementar el Ingress Controller.
+
+El Ingress Controller son un set de Pods que correrán en mi cluster y evaluarán estos archivos de configuración de rutas.
+Su función es evaluar estos archivos y controlar todas las redirecciones.Él será el entrypoint en el cluster
+Para instalarlo hay varias third-party implementations posibles.Hay una de Kubernetes llamada Kubernetes Ingress Controller pero con minikube tengo un addon que lo instala muy fácil
+
+				LOAD BALANCER VS NO LOAD BALANCER
+
+Cabe recalcar un asunto muy importante.Hay una capa de abstracción más que es el LoadBalancer.Según el Provider puede ser un LB autogenerable.
+Cualquier petición al cluster pasara primero por el LB y despues será redirigida al Ingres Controller para su evaluación.
+
+La ventaja de estos Providers es que ya configuran el LB por mí.Si usara bare metal tendré que configurar el entrypoint.Puede ser un proxy server(ya sea dentro del cluster o fuera).Investigar más sobre LB y como acceder a un cluster.
+
+Usaremos minikube para implementar el Ingress Controller(minikube addons list para ver los addons).Es una solución con un Nginx
+
+>minikube addons enable ingress
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesStuff/mongoexpress-demo$ minikube addons enable ingress
+    ▪ Using image k8s.gcr.io/ingress-nginx/controller:v0.44.0
+    ▪ Using image docker.io/jettech/kube-webhook-certgen:v1.5.1
+    ▪ Using image docker.io/jettech/kube-webhook-certgen:v1.5.1
+  Verifying ingress addon...
+
+NOTA:fijate que tengo un addon metallb.Bien,esto creará un namespace llamado ingress-nginx.
+
+Si activo los addons para el dashboard veré que crea dos Internal Service:
+service/dashboard-metrics-scraper   ClusterIP   10.104.26.76    <none>        8000/TCP   11
+service/kubernetes-dashboard        ClusterIP   10.108.69.213   <none>        80/TCP     11
+
+Al ser ClusterIP esta claro que no están expuestos.Sin embargo ya puedo exponerlos mediante una rule que apunte a ellos(fijate que están en otro namespace):
+
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: dashboard-ingress
+  namespace: kubernetes-dashboard # imprescindible
+spec:
+  rules:
+  - host: dashboard.com
+    http:
+      paths:
+      - backend:
+          serviceName: kubernetes-dashboard
+          servicePort: 80
+
+Fijate que el serviceName y el servicePort son los del Internal Service que quiero asignarle el dominio:
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesStuff/mongoexpress-demo$ k get services -n kubernetes-dashboard
+NAME                        TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+dashboard-metrics-scraper   ClusterIP   10.104.26.76    <none>        8000/TCP   8m21s
+kubernetes-dashboard        ClusterIP   10.108.69.213   <none>        80/TCP     8m21s
+
+Aplico el file y creara una rule en ese namespace(para acceder a las rules k get ingress).
+IMPORTANTE: parece que las rules estan semi-ocultas y no salen con un k get all.Hay que llamarlas igual que un secret o un pvc explicitamente:
+>k get ingress -n kubernetes-dashboard <- dado que creé una rule en ese namespace estará allí
+
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesStuff$ k get ingress -n kubernetes-dashboard
+NAME                CLASS    HOSTS           ADDRESS        PORTS   AGE
+dashboard-ingress   <none>   dashboard.com   192.168.49.2   80      60s
+Incluso me dice el dominio y la IP + port.Perfecto.
+NOTA: puede tardar un poco en darle la IP en ADDRESS
+Edito el /etc/hosts resolviendo la IP a ese dominio.
+Fijate que una vez entre a ese dominio,la rule hará que se redireccione al Internal Service
+
+					DEFAULT BACKEND Y PATHS O SUBDOMAINS
+
+NOTA: todo rule/ingress tiene algo llamado 'default-backend'.Es a donde irán las peticiones que no sepa redirigir la rule.Puedo verlo con describe:
+k describe ingress dashboard-ingress -n kubernetes-dashboard
+Name:             dashboard-ingress
+Labels:           <none>
+Namespace:        kubernetes-dashboard
+Address:          192.168.49.2
+Default backend:  default-http-backend:80 (<error: endpoints "default-http-backend" not found>)
+
+Obviamente no tengo esto definido asi que si voy a dashboard.com/cualquierCosa veré ese error.pues no he definido nada para ese path.
+Para gestionar esto tengo que crear un Internal Service con el name 'default-http-backend'.Este name es obligatorio que sea asi:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: default-http-backend
+  namespace: xxx
+spec:
+  type: ClusterIP
+  selector:
+     app: myapp <- name del Deploy
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+
+El port debe coincidir y lógicamente tendré que crear un Deploy para gestionar esto.
+
+						MORE COMPLEX USE CASES
+
+Realmente este forwarding es muy básico.Se puede hacer mucho más con las rules de Ingress:
+
+FORMA UNO- MULTIPLES PATHS FOR SAME HOST: esta es una opción muy común.Normalmente un dominio tendrá varios 'paths' como domain/analytics o domain/shopping:
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simple-fanout-sample
+  annotations: 
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: myapp.com
+    http:
+      paths:
+        - path: /analytics
+          backend: 
+           serviceName: analytics-service
+           servicePort: 3000
+        - path: /shopping
+          backend:
+            serviceName: shopping-service
+            servicePort: 8080
+
+De esta forma podré servir varios Internal Service con sus Deploys según el path del dominio.
+
+FORMA DOS: multiples subdominios en el mismo dominio(o múltiples dominios)
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: subdomains.app
+spec:
+  rules:
+  - host: analytics.myapp.com
+    http:
+      paths:
+        backend:
+          serviceName: analytics-service
+          servicePort: 3000
+  - host: shopping.myapp.com
+    http:
+      paths:
+        backend:
+          serviceName: shopping-service
+          servicePort: 8080
+
+Fijate que la primera opcion lleva múltiples paths(usando - path) y un sólo host y que la segunda es un arreglo de (- hosts) con un único paths.
+
+Aqui habría que acceder a http://analytics.myapp.com en vez de http://myapp.com/analytics
+
+					CONFIGURING TLS CERTIFICATE
+
+Para configurar una redirección a Https(en vez de todas las que he visto a http)es bastante sencillo.Simplemente hay que añadir la propiedad spec.tls y el secretName que guardará los certificados.Ejemplo:
+
+spec:
+  tls:
+  - hosts:
+    - myapp.com
+    secretName: myapp-secret-tls
+  rules:
+    - host: myapp.com
+
+NOTA:fijate que es nueva toda la sección spec.tls.Y ese archivo llamado myapp-secret-tls lo tendré que crear:
+apiVersion: v1
+kind: Secret
+metadata:
+  name: myapp-secret-tls <- debe coincider con el del Ingress
+  namespace: default <- pues eso
+data:
+  tls.crt: <base64 encoded cert> <- aqui irá el valor,el texto en base64
+  tls.key: <key en base64 en texto>
+type: kubernetes.io/tls
+
+IMPORTANTE: el type ya no será Opaque,sino que debe ser 'kubernetes.io/tls'.Y las propiedades de data también deben llamarse asi.Sencillo.
+
+
+
+
