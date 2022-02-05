@@ -1,0 +1,117 @@
+					PROMETHEUS ARCHITECTURE EXPLAINED
+
+Source: https://www.youtube.com/watch?v=h4Sl21AKiDg&ab_channel=TechWorldwithNana
+
+PROMETHEUS fue creado para monitorizar entornos de containerización altamente dinámicos,como kubernetes,docker-swarm,...
+Sin embargo también puede monitorizar infraestructura no containerizada.
+Prometheus se ha convertido en la herramienta nº 1 de monitorización en contenedores.
+
+El despliegue moderno se ha vuelto muy complejo,puede haber cientos de procesos,todos interconectados.Esto es hoy en dia para un humano terriblemente dificil de mantener y debuggear,incluso a veces es simplemente imposible.
+
+Imagina que un server se queda sin RAM y tira a un pod con la DB,un Deploy que necesite esa DB empezará a fallar,pero el usuario sólo verá un pequeño error por la UI.Desde aqui habría que ir hacia atrás y rezar por que lleguemos a la conclusión de que el servidor X se quedó sin RAM.
+
+PROMETHEUS monitoriza constantemente todos los servicios.Alertará cuando algo crashee,mandando emails,por ejemplo.
+Incluso puede identificar problemas antes de que ocurran(avisar cuando una cpu llegue al 70% de la RAM).
+
+					PROMETHEUS ARCHITECTURE
+
+El componente principal es el Prometheus Server,el cual hace el trabajo de monitorización.Consta de tres partes:
+1- A Time Series Database: almacena todas las métricas(metrics data)
+
+2- A Data Retrieval Worker: un worker que es responsable de pullear las métricas de aplicaciones,servicios,servidores.Tras pullearla la guarda en la DB del punto 1.
+
+3- Un Web Server(bajo http): un web server que acepta PromQl Queries(un lenguaje de queries).Se le puede hacer queries bajo ese lenguaje sobre las métricas de la DB.También hay un dashboard web para interactuar o cualquier tipo de data visualization para interactuar(como Grafana)
+
+IMPORTANTE: Prometheus puede monitorizar casi cualquier cosa.Estos objetos se les llama 'targets'.Según el tipo de 'target' se le podrá sacar especificas 'units'.
+Por ejemplo a un Linux se le podrá sacar la unit para CPU Status,memory use,Disk Space,pero si es una aplicación se le podrá sacar otras métricas,como nº de peticiones,nº de excepciones
+
+Prometheus guarda estas métricas en un formato legible para los humanos.
+Cada métrica tendrá los atributos TYPE y HELP.HELP describe la métrica y TYPE tiene tres tipos:
+1- Counter: cuantas veces ha sucedido
+2- Gauge: medida o valor actual para algun parámetro(como la RAM,capacidad de disco).En definitiva un valor o medida.
+3- Histograma: cuán grande o largo fue determinado hito
+
+					COLLECTING METRICS FROM TARGETS
+
+Prometheus coleciona mediante su worker datos de sus targets mediante peticiones HTTP.Por defecto es hostaddress/metrics.Y por ello cada target debe exponer este endpoint /metrics.Además,la data debe estar en el formato correcto para que Prometheus entienda 
+
+IMPORTANTE: muchos servicios ya exponen el endpoint /metrics por defecto,pero muchos otros no tienen soporte nativo para Prometheus.Por ello necesitan de un componente que los ayude a exponer este endpoint.Para ello existe el componente Exporter
+
+Exporter es un script o servicio que fetchea las metrics del target,las convierte al formato correcto y las expone en el endpoint /metrics.Prometheus tiene una lista oficial de exporters:
+https://prometheus.io/docs/instrumenting/exporters/
+Servicios como MySQL,Linux,todos ellos son scrapeables.Por ejemplo,el exporter de un Linux es un ejecutable que debo descargar,descomprimir y ejecutar.
+Recolectará,formateará y expondrá las métricas para el worker de Prometheus.
+
+NOTA: estos exporters también estan disponibles como Docker Images,con lo que muchas veces se crea el contenedor para el mysql y otro con el exporter,se conectan 
+
+En cuanto a aplicaciones se necesitan client libraries.Aqui el link:
+https://prometheus.io/docs/instrumenting/clientlibs/
+
+				PROMETHEUS PULL - PUSH MODES
+
+NOTA: Recuerda que Prometheus hace pull de la data,cargando él con la carga.Si fueran los microservicios los que tienen que mandarla,sería por push,y generarían mucho tráfico y high load network.Hacerlo por pull deja a los targets sin ninguna carga de trabajo por su parte.
+
+Éste es el modo estandar de PROMETHEUS,hacerlo todo él.Sin embargo ciertos targets pueden ser 'short-lived job' como un cronjob,por ejemplo.En este caso puede ser el target el que mande la data,por pull,ya que el worker podría no tener tiempo para scrapear la data.Asi pues Prometheus combina las dos formas.
+Sin embargo debe evitarse el push por todas las ventajas que permite el pull de la data.
+
+						CONFIGURING PROMETHEUS
+
+Bien,y como sabe prometheus qué scrapear y cuándo?.Mediante el file prometheus.yaml.En él definiré los targets y intervalos.Este es un ejemplo:
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files: <-permiten agregar métricas o crear alertas para un hito
+  # - "first.rules" 
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+Esto es un ejemplo muy básico,en static_configs iría un arreglo de jobs(aqui sólo está el propio prometheus).Fijate que cada job puede sobreescribir los scrape_interval que arriba están en global.Esto suele ser asi ya que algunos jobs 15s puede ser muy poco tiempo o mucho,etc...
+	
+				PROMETHEUS AS ALERT MANAGER
+
+Prometheus tiene un Alert Manager que puede avisar por Email,Slack,Watsap,.. por lo que se le configure.
+
+NOTA: Prometheus puede almacenar la data de su DB tanto en local como el remoto.ESa data se guarda en un custom TimeSeries Format,con lo que no puedo guardarla en una db SQL
+
+Recuerda que puedo usar PromQL para hacerle queries a Prometheus,o usar herramientas de visualization como Grafana.
+Nana recalca que montar todo esto es muy complejo y no está bien documentado,asi que hará mas videos explicativos.
+
+Por último Prometheus es totalmente compatible con Docker y puede ser fácilmente desplegado por ello
+
+						SETTING UP PROMETHEUS PART ONE
+
+Source: https://www.youtube.com/watch?v=QoDqxm7ybLc
+
+Hay varias formas de desplegar Prometheus.
+1- Crear todos los yaml yo mismo y aplicarlos en el orden correcto(obviamente no es lo que se hace ya)
+2- Usando un 'operator'.Es como un manager que controlará todos los componentes de Prometheus.Controlará todo como una unidad
+3- Usando un Helm Chart para desplegar el operador.Helm creará el initial Setup y despues el Operator lo manejará.
+
+								OPERATORS 
+Source: https://www.youtube.com/watch?v=ha3LjlD6g7g&ab_channel=TechWorldwithNana
+
+NOTA: los Operator son usados en Stateful Applications.Cabe destacar que hay que diferenciar entre una Stateful App Without Operator y una Stateful App with Operator.
+
+1- Stateful App Without operator: una Stateful App necesitará programadores que 'operen' en la app,ya que va a tener problemas por ser una Stateful App (App Without Operator,nosotros somos el operador)	
+
+2- Stateful App With Operator: si bien se aconseja que la DB use almacenamiento externo(en definitiva desacoplarla del cluster) no siempre será posible esto,y hay que manejar una Stateful App.
+
+IMPORTANTE: Un operator reemplaza al 'operador humano' con software.Cualquier tarea la hará ahora el programa.Sabrá como desplegar la app,crear replicas,recuperarse de un error.De esta forma,el operador hace sencillo escalar una Stateful App.
+
+Más concretamente,el operador es como un 'custom control-loop' que estará mirando por el proceso,de igual forma que lo hace Kubernetes.
+Usa CRDs o Custom Resource Definitions(componentes customizados de Kubernetes,que extenderán de la k8s API,siendo totalmente compatibles y reemplazables).Yo también puedo crear un CRD.
+También tendrá todo lo que tiene la parte que sustituye(acceso a configMaps,Secrets,Services,..)
+En resumen k8s es capaz de automatizar todo el lifecycle de una Stateless App,mientras que si es Stateful tengo que usar un operador o hacerlo yo,ya que k8s no es capaz
+NOTA: cada aplicación tendrá su operador(prometheus-operator,mysql-operator,postgres-operator).
+Los operators son creados normalmente por equipos con conocimientos TOP en ese tema.Puedo verlos en OperatorHub.io y si quiero crearlos tengo el operator SDK para desarrollarlo y publicarlo:
+
+				DESPLEGANDO PROMETHEUS WITH HELM + PROMETHEUS
+
+NOTA: recuerda que helm se instala con brew y está escrito en Go por motivos obvios.Una vez instalado helm instalo el operator:
+>helm install prometheus stable/prometheus-operator
+Seguir por la instalación mañana

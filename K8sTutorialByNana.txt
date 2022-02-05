@@ -1040,6 +1040,291 @@ type: kubernetes.io/tls
 
 IMPORTANTE: el type ya no será Opaque,sino que debe ser 'kubernetes.io/tls'.Y las propiedades de data también deben llamarse asi.Sencillo.
 
+				2h24m HELM - PACKAGE MANAGER OF K8S
+
+Helm tiene varias funcionalidades:
+
+FEATURE ONE: package manager
+Helm es un Package Manager para Kubernetes.Puedo pensar en él como npm o apt,...
+Helm también empaqueta los YAML files y los distribuye en repositorios(publicos y privados)
+Con Helm puedo aplicar un file yaml que ya ha configurado otro dev,descargandolo del repo.
+
+Imagina una instalación de Elastic Stack(for Logging).Tendría que crear el StatefulSet,el ConfigMap,elSecret,un User con permisos,el Service,...Con Helm podría instalar todo esto mediante un paquete,un empaquetado de yamls que ya configuró otro.
+NOTA: a este empaquetado de archivos se le llama Helm Chart.
+Con Helm puedo crear mis propios Helm Charts(Bundle of yaml files)
+Puedo pushearlos al Helm Repository
+Y obviamente puedo descargarlos y usarlos
+
+La mayoría de Deploys complejos como Prometheus o una DB con su StatefulSet tienen Helm Charts preparados en el Helm Repository para descargarlos y usarlos.
+
+NOTA:fijate que se trata de reusar configuraciones válidas.Puedo instalar helm con brew,con Chocolatey o con apt | snap
+Puedo buscar por cli con:
+helm search hub [KEYWORD] [flags]
+O simplemente ir a artifact.io(es el Helm Repo)
+NOTA: este repo es el público,pero también hay privados.
+
+FEATURE Dos: Templating Engine
+Imagina una aplicación con varios microservicios,y que los archivos de configuración para el Deployment y los Services fueran casi iguales.Sin Helm tendría que escribir todos,sean o no sean parecidos.
+Con Helm puedo crear un Blueprint común,con el que crear diferentes versiones con pequeños cambios.Ya no usaré valores en duro,sino expresiones donde inferir valores.Ejemplo:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Values.name }}
+spec:
+  containers:
+  - name: {{ .Values.container.name }}
+    image: {{ .Values.container.image }}
+    port: {{ .Values.container.port }}
+
+* El '.Values' se refiere a un yaml que se llamará values.yaml:
+name: my-app
+container:
+  name: my-app-container
+  image: my-app-image
+  port: 9001
+
+Fijate que sólo tendría que crear un yaml entero y 4 o 5 pequeños,sólo con lo que cambia
+
+IMPORTANTE: Con Heml puedo hacer redeploys en un comando:
+Deploy same apps across different clusters: Imagina que quiero desplegar una app en tres clusters diferentes(develop-testing y produccion).Puedo crear mi propio Helm Chart y re-desplegar la app en los clusters dos y tres con un sólo comando
+
+		STRUCTURE OF A HELM CHART -BUNDLE OF YAMLS-
+
+Normalmente la estructura de un Helm Chart es la misma.Tiene un directorio principal mychart/ y los files Chart.yaml,values.yaml,despues dos subfolders charts/ y templates/.También puede haber otros files como license.txt o readme.md
+
+Para instalar una Helm Chart sería con helm install <chartname>
+
+NOTA: parece que más bien lo que hay que hacer es una template,un values.yaml y despues otros my-values.yaml con los cambios.Investigar más.
+
+FEATURE TRES : Release Management
+En este punto hay que diferenciar entre Helm version 2 y Helm version 3.
+En la versión dos venía el Client(helm CLI) y un server(llamado Tiller).Este server tenia que correr en un cluster de k8s.
+Al querer instalar algo con helm install <chartname> el helm cli interactuaba con el server tiller,y éste creaba un registro de cada ejecución de una chart.
+Podia hacer crear ,borrar o actualizar Components sin permiso.Esto era una security issue.asi que en Helm 3 cambiaron el servidor por un script binario 
+Puedo ver la versión de hel con <helm version>:
+
+$KubernetesStuff$ helm version
+version.BuildInfo{Version:"v3.8.0", GitCommit:"d14138609b01886f544b2025f5000351c9eb092e", GitTreeState:"clean", GoVersion:"go1.17.5"} <- la 3.8
+
+						2H38M KUBERNETES VOLUMES
+
+Un Volume es un simple directorio con datos.Es la forma de persisir data en Kubernetes,ya que él no lo hará por defecto.Veremos tres componentes que se usan para esto:PersistentVolume, PersistentVolumeClaim y StorageClass.
+
+Dado que cuando un Pod vuelve a ser reiniciado no se sabe en que Node va a nacer,el Storage siempre debe estar disponible independientemente del Node,es decir que el Storage es a nivel de cluster.
+Además,el storage necesita sobrevivir si el cluster cae.
+Normalmente un Pod va a necesitar almacenamiento externo cuando sea una DB,o cuando use archivos(como subida de imagenes o cualquier tipo de archivo)
+
+						PERSISTENT VOLUME
+
+Un PV es un componente a nivel de cluster,como cualquier otro,se crea via YAML file,en él debo especificar la cantidad de storage a reservar entre otras cosas.
+
+Puedo pensar en un PV como un plugin que se enchufa al cluster(puedo tener varios).Cada PV puede apuntar a un espacio físico diferente,uno puede apuntar a Cloud Storage con AWS ,otro en GCP y otro en el disco duro local de ese servidor.
+Esto lo tendré que definir en la propiedad spec.Este es un ejemplo de un PV apuntando a GCP:
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: test-volume
+  labels:
+    failure-domain.beta.kubernetes.io/zone: us-central1-a
+spec:
+  capacity:
+    storage: 400Gi
+  accessModes:
+  - ReadWriteOnce
+  gcePersistentDisk:
+    pdName: my-data-disk
+    fsType: ext4
+
+Recuerda que un PV no vive en un namespace,sino en el cluster.Además,siempre debería de usar Storage externo por si cae el Cluster.
+
+						PERSISTENT VOLUME CLAIM
+
+Cuando un Pod pida almacenamiento,lo hará mediante un PVC.Un PVC también se crea con un YAML file.Este es un ejemplo:
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-name
+spec:
+  storageClassName: manual
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    request:
+      storage: 10Gi
+
+IMPORTANTE: el pod debe de pedirlo en el yaml:
+spec:
+  containers:
+    - name: app
+      image: nginx
+      volumeMounts:
+      - mountPath: "/var/www/html"
+        name: mypd
+  volumes: 
+    - name: mypd
+      persistentVolumeClaim:
+        claimName: pvc-name
+
+* Aqui el Pod con el nginx pide un pvc para la ruta /var/www/html.Lo pide por elname,en este caso.
+El PVC buscará por un PV que satisfaga los requerimientos.
+NOTA:si bien los PV son a nivel de cluster el Pod/Deploy y el PVC si deben existir en el mismo namespace,luego el PVC si es namespaced??.
+Fijate que el volumen es montado en el Container(importantisimo)
+
+NOTA:cuando un Pod sustituya al inicial,si tiene un Volumen enlazado lo primero que hará será leerlo.Además,siempre será el mismo Storage,lógicamente.
+
+Normalmente el admin del cluster crea los PV y el dev los PVC,aunque obviamente se lo pedirá al admin.Crear estas dos capas de abstracción lo hace más sencillo en este sentido.
+
+						CONFIGMAP Y SECRET
+
+Ambos son dos tipos de volumenes de ambito local.No son creados mediante PVs,sino que son componentes propios gestionados por Kubernetes.Cabe destacar que son volumenes,pues albergan data.
+IMPORTANTE:puedo montarlos en un Pod de igual manera que un PVC:
+
+spec:
+  containers:
+    - name: busybox-container
+      image: busybox
+      volumeMounts:
+        - name: config-dir
+          mountPath: /etc/config
+  volumes:
+    - name: config-dir
+      configMap: 
+        name: bb-configmap
+
+Obviamente deberá existir un configMap con ese name,pero este pod lo reclamará y montará en /etc/config.Perfecto.Puedo montar un Secret | CONFIGMAP en cualquier Pod,importante.
+NOTA: un Volume es un simple directorio con data
+
+Fijate que un Pod podria requerir diferentes volumes,podria requerir un Secret,un ConfigMap y un PVC,dos PVC,tres PVCs,etc Puede requerir varios volumes.
+
+						STORAGE CLASS
+
+Para hacer el proceso anterior más eficiente se creó el Storage Class. Un SC provisiona los PV dinamicamente,es decir,cuando el PVC lo pida,se crea un PV satisfacciendo sus necesidades.
+De esta forma no es necesario hablar con el admin y esperar al PV.Un SC se crea con un config file también.Un ejemplo:
+
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: storage-xxx
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: io1
+  iopsPerGB: "10"
+  fsType: ext4
+
+El atributo 'provisioner' es fundamental en un SC.En este caso fue AWS.
+La forma de proceder es la siguiente: un PVC requiere un PV,y lo que hace es pedir un SC,que creará el PV en el background.
+
+Ejemplos más útiles.Crear un PV local en el folder /mnt/data del cluster
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: task-pv-volume
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data"
+
+Puedo ver que lo crea,y que está esperando(he usado otro nombre):
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesStuff$ k get pv
+NAME                   CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM   STORAGECLASS   REASON   AGE
+pv-volume-sample-1gi   2Gi        RWO            Retain           Available           manual                  4s
+
+Ahora creo un PVC que pida 1Gi y montará ese PV:
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: task-pv-claim
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesStuff$ k get pvc -o wide
+NAME    STATUS   VOLUME                 CAPACITY   ACCESS MODES   STORAGECLASS   AGE   VOLUMEMODE
+pvc01   Bound    pv-volume-sample-1gi   2Gi        RWO            manual         32s   Filesystem
+
+Veré que cambia Retain a Bound.Ahora ya lo puede pedir cualquier pod por el nombre:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: task-pv-pod
+spec:
+  volumes:
+    - name: task-pv-storage
+      persistentVolumeClaim:
+        claimName: task-pv-claim
+  containers:
+    - name: task-pv-container
+      image: nginx
+      ports:
+        - containerPort: 80
+          name: "http-server"
+      volumeMounts:
+        - mountPath: "/usr/share/nginx/html"
+          name: task-pv-storage
+
+Fijate que yo tendré otro claimName, y que volumes.name hace match con volumeMounts.name(pvc01 en este caso).Es decir que le doy un nombre cualquiera al volumen,pido un PVC existente por su nombre  y lo monto en el dir necesario segun la imagen que sea en base a ese nombre del volumen.
+
+					2H58M STATEFULSET EXPLAINED
+
+StatefulSet es un componente de Kubernetes que se usa expecíficamente en aplicaciones stateful.Todas las DB , o cualquier App que almacene datos es una Stateful App.
+Si bien una stateless app despliega sus Pod mediante un Deployment una Stateful app debe usar un StatefulSet,de esta forma se replicaran los pods correctamente
+
+Fijate que ambos componentes,Deployment y StatefulSet, son idénticos(controlan el replicamiento de los Pods,configuran la persistencia de datos con Volumes,...),entonces,¿cual es la diferencia?.
+
+Manejar una Stateful app es más dificil,imagina que quiero tres réplicas de un pod con java,no hay problema,los tres pods serán idénticos e intercambiables(palabra clave),pero si el pod tiene estado y es un mysql ya no son intercambiables.
+
+NOTA: un Deployment crea los Pods en un random order con random hashes.Al final,el Service hará load balancing a los Pods sin ningun problema.Y lo mismo para borrarse,el orden es random y da igual cual borrar primero
+
+
+Un StatefulSet no se comportará asi,los pods no pueden ser asignados con un hash random,no pueden ser levantados ni borrados en un orden aletorio,pues no son idénticos(concepto de Pod Identity)
+
+Pod Identity: cada pod tendrá un id único,pero no aleatorio.Cuando un pod muera y lo suplante otro,seguirá con esa identidad(en un deploy es otro hash,en un StatefulSet es el mismo id).Esto es un concepto clave
+
+Cuando cree replicas de un mysql,no puede haber dos pods con capacidad de lectura/escritura,ya que puede haber inconsistencia de datos.En su lugar hay un mecanismo que decide qué replica podŕa leer/escribir y cuales sólo leer.
+
+El POD que pueda leer y escribir es denominado el master,y los demás son esclavos o workers.Aqui ya se puede ver que no son identicos,ya estan siendo categorizados por rol.
+No sólo esto,sino que entre todos ellos también hay diferencias aparte del rol,y es que no usan el mismo almacenamiento físico.Por ejemplo:
+mysql-0: es el master y usa PV en /data/vol/pv-0
+mysql-1: es un worker y usa PV en /data/vol/pv-1
+mysql-2: es un worker y usa PV en /data/vol/pv-2
+
+Debido a que usan diferentes almacenamientos cada Pod tienen que estar sincronizando continuamente la data(tercera diferencia)
+NOTA:dado que sólo puede escribir el mysql-0,siempre avisará el master a todos los workers cuando se cambie algo
+IMPORTANTE: y si por ejemplo se levanta un nuevo Pod,lo primero que hará será sincronizar la data,siempre del anterior.
+
+IMPORTANTE: estos volumes siempre se recomienda que sea almacenamientos externos,para que no se pierda la data si cae el cluster.Para ello habrá que configurar PVS para el StatefulSet,de igual manera que si fuera en Deployment.
+Si el PV es para un StatefulSet también se guarda el role y el id del Pod,de esta forma cuando levante un nuevo Pod sabe su rol y su id,mediante el cual sabe el directorio del Storage que le pertenece.
+Son varias cosas pero es bastante sencillo entender todo.Siempre tengo el video para volver a verlo.
+
+NOTA: el Pod Identity sigue unas reglas y siempre va a seguir está:
+$(statefulset name) - ( ordinal) . Asi pues empezará por mysql-0, mysql-1,etc.. y el 0,que será el primero, siempre va a ser el master
+
+También cabe recalcar que sólo se va a replicar un nuevo pod si el anterior esta corriendo perfectamente.Al borrarlos se empieza desde el final,se borrará el último y no se empezará a borrar el penúltimo si no se borró el último correctamente.
+Y de igual manera,el Service sabrá como redireccionar con otra regla:
+${pod name}.{governing service domain} que resultará en : mysql-0.svc2 | mysql-1.svc2 ... imaginando que el service se llamaba svc2.
+Dado que cada pod tiene un nombre predecible y el DNS también está fijo,aunque cambie la IP el Service sabe a que pod balancear la petición
+
+Todo este problema es porque la containerización no se pensó para persistir datos,y por ello una stateful app no es un candidato ideal para k8s.
+Investigar si pueden ayudar los operators con esto.
+
+				3H13M KUBERNETES SERVICES EXPLAINED
+
 
 
 

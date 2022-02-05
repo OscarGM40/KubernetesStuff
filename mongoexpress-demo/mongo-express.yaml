@@ -14,12 +14,19 @@ spec:
       labels:
         app: mongo-express
     spec:
+      volumes:
+        - name: mongo-storage
+          persistentVolumeClaim:
+            claimName: pvc01
       containers:
         - name: mongo-express
           image: mongo-express 
           # ports es un array porque un Pod podría haber abierto varios puertos
           ports:
             - containerPort: 8081 # esto viene de mirar en DockerHub,la imagen es una app web que sale por el 8081 luego el pod debe exponerlo
+          volumeMounts:
+            - name: mongo-storage
+              mountPath: "/data"
           env:
             - name: ME_CONFIG_MONGODB_ADMINUSERNAME
               valueFrom:
