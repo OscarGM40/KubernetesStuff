@@ -1,0 +1,101 @@
+							TERRAFORM AND ANSIBLE INTROS BY NANA
+
+Terraform: https://www.youtube.com/watch?v=l5k1ai_GBDE&ab_channel=TechWorldwithNana
+
+Terrafomr permite automatizar y manejar mi infraestructura,mi plataforma y servicios que corran en esa plataforma(es un IaaC).
+Es open-source y usa lenguaje declarativo
+
+Es decir,es una herramenta para aprovisionar infraestructura(tool for infraestructure provisioning).Ya no tendré que levantar los servers,instalarles docker,kubernetes,crear roles,instancias,firewalls..
+
+Terraform es usado en el paso de aprovisionar la infraestructura,siendo Ansible más adecuado para configuraciones(con lo que lo mejor es usar ambos conjuntamente).
+
+IMPORTANTE: Ambos,Terraform y Ansible son IaaC(Infrastructure as a Code),lo cual significa que ambos puede provisionar,configurar y manejar infraestructura.
+Sin embargo Terraform es más usado en el aprovisionamiento y Ansible en las configuraciones.
+Ansible es más maduro y Terraform es relativamente nuevo,lo cual lo hace más sujeto a posibles cambios fuertes.
+Terraform también es muy bueno como orquestador.
+
+Nació debido a las necesidades de hoy en día de tener aplicaciones muy dinámicas opara replicar infraestructura.
+
+				ARQUITECTURA DE TERRAFORM
+
+Para poder realizar esto Terraform tiene dos componentes básicos:
+
+1- Terraform Core: el core tiene dos fuentes de entrada(input source),un archivo de configuración donde el dev le pasa la configuración deseada y el state,que es el estado deseado de la app.
+El Core tomará estas dos entradas(el estado deseado y el archivo) y planeará qué es lo que necesita crear/actualizar o editar para llegar a ese estado deseado)
+
+2- Providers: son los proveedores para determinada arquitectura(AWS,Azure,..) Cualquier IaaS.A través de estos providers tendré acceso a los recursos(es como un SDK)
+
+Realmente lo importante es tener una pequeña overview de lo que es Terraform,nada más.Mediante config files y cli interactuará con lo que yo quiera mediante un Provider para automatizar provisionamiento de infraestructura.
+
+					VIDEO DOS ANSIBLE & ANSIBLE PLAYBOOKS
+
+Fuente: https://www.youtube.com/watch?v=1id6ERvfozo&ab_channel=TechWorldwithNana
+NOTA: AWS,GCP son todos IaaS.Ansible y Terraform son IaaC.
+
+Ansible es una herramienta para automatizar tareas,imagina que tienes 5 servidores y quieres actualizar Docker en los 5 y despues desplegar una app en los 5.
+Esta tarea puede automatizarse  con Ansible
+También se usa en otras tareas repetitivas,como backups,reboots,crear usuarios,asignar permisos
+Notése también que un humano tenderá a fallar,mientras que una tarea automatizada no tendrá fallos(reliable concept)
+
+Ventajas:
+1- puedes ejecutar este tipo de tareas desde tu propia máquina
+2- en un único yaml puedes configurar tareas(install+update+config+deploy,...)
+3- puedo reusar ese config gile las veces que quiera en diferentes environments
+4- dado que un humano suele tener fallos usar una tool es menos propenso a errores5- Ansible conecta con cualquier Sistema Operativo o Cloud Provider
+
+6- Ansible is Agentless(no hay que instalar nada en el host al que se conecta,simplemente se accede por ssh(otras herramientas si que instalan un agente en la máquina a la que se conecta)
+NOTA: ser agentless significa que no tengo que instalar,pero tampoco actualizar nada cuando ese agente se quede obsoleto.Es una ventaja clara.
+
+						ANSIBLE ARQUITECTURE
+
+Ansible trabaja con módulos.Un módulo es un programa que hará el trabajo deseado actual.Son pusheados a la máquinas y tras hacer el trabajo son removidos(obviamente Ansible es un proceso master)
+
+Un módulo puede instalar un proceso, aplicar una rule,parar un proceso,...
+Los módulos son muy granulares,hacen tareas pequeñas,por ejemplo,uno puede servir para copiar o crear un file,otro para instalar un nginx,otro para arrancar ese nginx
+Ansible tiene cientos de procesos,los cuales puedo consultar en su doc oficial(https://docs.ansible.com/ansible/latest/collections/index.html).
+Ansible usa YAML,con lo que es bastante fácil de entender qué se está haciendo.
+
+Obviamente,con un único módulo no va a ser suficiente la mayoría de veces.Normalmente se necesitan múltiples módulos,en una determinada secuencia,agrupados,esto es lo que se le conoce como un Ansible Playbook
+
+						ANSIBLE PLAYBOOKS
+
+Son conjuntos de tareas,las cuales a su vez pueden usar conjuntos de módulos.Dado que se suelen repetir muchos valores usaran variables en el yaml(con dobles llaves se llaman host: {{DB_HOST}} )
+Una Playbook describe como un que orden se ejecutará todo,a que hora y donde y que es exactamente lo que deben hacer los módulos.En otras palabras orquesta la ejecución de modulos(Ansible es un orquestador de módulos).
+
+Una Playbook debe tener ciertos atributos,como los hosts donde se conectará y el remote_user.Además es buena práctica darlas nombre con la prop name.
+Ansible es más poderoso que Docker,ya que permite no solo crear el contenedor sino desplegarlo,y si fuera necesario crear la VPS,etc.
+
+NOTA: Ansible tiene una UI llamada Ansible Tower en la que editar gráficamente las configuraciones.De esta forma teams de devs pueden coordinarse,centralizar las tareas,configurar permisos,manejar el inventario de tareas,...
+Sus alternativas serian Puppet ó Chef pero ambas están escritas en Ruby con lo que es más compleja su sintaxis.
+No sólo eso sino que no es agentless y necesitará instalarse en cada maquina a la que se conecte la task
+
+IMPORTANTE: este tipo de herramientas sólo cobra sentido en complex environments con varias máquinas servidores,donde los errores humanos sean una realidad debido a las tareas repetitivas.
+
+			 	VIDEO 03 WHAT IS INFRASTRUCTURE AS A CODE
+
+Source: https://www.youtube.com/watch?v=POPP2WTJ8es&ab_channel=TechWorldwithNana
+
+Antigüamente los devops ejecutaban tareas repetitivas,sin automatizarlas.
+Esto consumia tiempo,recursos humanos y las tareas eran propensas a errores.
+En el mundo actual del devops hay una serie de herramientas para automatizar tareas.Se las conoce como Infrastructure as a Code(IaC).
+
+Hay varias ya que cada tool suele ser mejor en un aréa en concreto.Hay tres:
+1)Infrastructure provisioning(crear nuevos servers,darles network,crearles LBs...
+
+2)Configurar esa Infrastructure provisioned: el siguient aréa sería configurar toda esta infraestructura,como instalar apps(java,python,una DB ,manejar estas app,..
+
+3) Deployment of those applications: la tercer aréa seria el despliegue de estas apps.
+Cabe mencionar que con Docker se han fusionado los puntos 2 y 3.
+
+Asi pues las diversas herramientas usadas para IaC suelen combinarse,y se usan en areas en las que son más apropiadas que otras.Ver gráfico.
+Un ejemplo común es usar Terraform para aprovisionar infraestructura y Ansible para configurarla e instalarle apps.
+
+IMPORTANTE: las IaC tools usan lenguaje declarativo,en vez de procedural.También está el concepto de mutable(donde la infraestructura no es reemplaza) y el de inmutable(donde si es reemplazada).Estos conceptos pueden cambiar según la herramienta,unas pueden ser procedurales e inmutables y otras declarativas y mutables.
+Además,pueden ser agent ó agentless(como Ansible)
+
+
+
+
+
+
+

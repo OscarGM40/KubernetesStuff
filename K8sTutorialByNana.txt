@@ -1325,6 +1325,105 @@ Investigar si pueden ayudar los operators con esto.
 
 				3H13M KUBERNETES SERVICES EXPLAINED
 
+Hay cuatro tipo de Services,ClusterIP,NodePort,LoadBalancer y Headless.
+En un cluster de k8s cada Pod recibe su dirección IP,pero dado que son efímeros no se usa su IP.
+Para solucionar esto se creo el componente Service,que proporciona una IP estable fija(además de servir para realizar el loadbalancing)
+
+Es por ello que facilitan el desacoplamiento o loose coupling,tanto dentro del cluster como hacia afuera(importante).
+
+				CLUSTERIP SERVICE
+
+El más común,y el tipo por defecto si no se indica un tipo.Se usa para conexiones dentro del cluster entre pods(aunque se le puede hacer port-forward a un ClusterIP o simplemente entrar por el Ingress Controller).
+
+Dado que cada Worker Node es asignado con un rango de Ips internas,los Pods de cada Node tendrán una IP diferente.
+IMPORTANTE: Un Service no es un proceso o script,básicamente es una abstraction layer que representa una IP sólamente.
+
+IMPORTANTE: el Service redirecciona en base a la propiedad 'selector',que hará match con las labels dadas a los Pods(usará la propiedad targetPort)
+
+NOTA: cuando creo un Service k8s crea un Endpoint,con el mismo nombre que el Service:
+oscar@acer-linux:/media/oscar/CRUCIALX6/CursoMicroservicesUdemy/KubernetesStuff$ k get endpoints
+NAME                                      ENDPOINTS                                         AGE
+alertmanager-operated                     172.17.0.9:9094,172.17.0.9:9094,172.17.0.9:9093   28h
+kubernetes                                192.168.49.2:8443                                 8d
+mongo-express-service                     172.17.0.4:8081                                   6d20h
+mongodb-service                           172.17.0.12:27017                                 6d21h
+prometheus-grafana                        172.17.0.6:3000                                   28h
+prometheus-kube-prometheus-alertmanager   172.17.0.9:9093                                   28h
+prometheus-kube-prometheus-operator       172.17.0.11:10250                                 28h
+prometheus-kube-prometheus-prometheus     172.17.0.13:9090                                  28h
+prometheus-kube-state-metrics             172.17.0.10:8080                                  28h
+prometheus-operated                       172.17.0.13:9090                                  28h
+prometheus-prometheus-node-exporter       192.168.49.2:9100                                 28h
+
+NOTA: cuando un Service tenga abiertos más de un puerto hay que usar la propiedad name y darle un nombre a cada puerto obligatoriamente.
+
+					HEADLESS SERVICE
+
+Imagina que un Cliente quiere comunicarse con un Pod especifico directamente,o que un Pod quiere hablar directamente con otro Pod.
+En este caso no quiero un Service,pues,ojo,seleccionará otro Pod al azar(fijate que queremos hablar con un Pod en concreto).
+
+Esto puede darse en apps Stateful,pudiendo querer hablar con el Pod Master para grabar en la DB,por ejemplo,o para leer manualmente tras repllicar un nuevo Worker para esa DB.
+Este es un caso común en el que se quiere comunicación directa con un Pod en concreto.
+
+Dado que cliente(o el que se quiera comunicar con ese Pod en concreto) necesita saber la IP de ese Pod Kubernetes tiene una opciòn que se llama DNS Lookup,que permite descubrir las Ips de los Pods.
+Esta feature devuelve la IP del ClusterIP por defecto,lo cual es lógico,pero puedo pasar ClusterIP a none para que no devuelva la Ip del Service y devuelva la del Pod.
+Simplemente para usar un Service Headless hay que poner ClusterIP:none.Ejemplo:
+
+apiVersion: v1
+kind: Service
+metadata: 
+  name: mongodb-service
+spec:
+  clusterIp:none
+  selector:
+    app:mongodb
+  ports:
+    - name: portOne
+      protocol: TCP
+      port: 27017
+      targetPort: 27017
+
+NOTA: esto se puede ver cuando un ClusterIP no tenga IP:
+prometheus-kube-prometheus-operator       ClusterIP      10.104.57.134    <none>        443/TCP                      28h
+prometheus-kube-prometheus-prometheus     ClusterIP      10.110.21.91     <none>        9090/TCP                     28h
+prometheus-kube-state-metrics             ClusterIP      10.107.124.156   <none>        8080/TCP                     28h
+prometheus-operated                       ClusterIP      None             <none>        9090/TCP                     28h <- este es un Headless
+
+NOTA: cuando defina la propiedad type podrá ser de tres tipos ClusterIP(lo será si no la pongo también),de tipo NodePort o de tipo LoadBalancer.
+
+						NODEPORT
+
+Un Service NodePort va a abrir un port en el cluster,más concretamente,va a abrir el mismo puerto(rangos de 30000 a 32767) en cada Nodo Worker.
+Y por esto el tráfico externo(como el browser) tendrá acceso a este fixed port en cada Worker Node.El puerto será el mismo para los Workers
+Para abrir este puerto se usa el atributo nodePort en el yaml
+Dado que abrir el cluster es muy peligroso no es recomendable usar NodePort como Service.
+
+IMPORTANTE: cuando creo un NodePort o un LoadBalancer automáticamente se crea un ClusterIP también,es por ello que tengo que definir los tres puertos en el yaml 
+ apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-xx
+spec:
+  type: NodePort
+  selector:
+    app: web
+  ports:
+    - protocol: TCP
+      port: 3200 <- port del ClusterIP que se crea solo
+      targetPort: 3200 <- port del Pod
+      nodePort: 30001 <- port que abro en cada Node del cluster
+
+					LOAD BALANCER SERVICE 
+
+Dado que usar un Service tipo NodePort no es nada seguro hay una mejor alternativa que es usando un LoadBalancer.
+Cada Provider me dará un LoadBalancer,y será por ahi por donde se entre al cluster,teniendo éste todo cerrado.
+Cuando se crea un LoadBalancer se crea automáticamente un NodePort y un ClusterIP,asi que simplemente se accede por el LB que accederá por el NodePort.
+
+Obviamente es una opción más segura,ya que conocemos la entrada y el NodePort sólo va a ser accedido por el LoadBalancer,nadie más podrá entrar por ese puerto más que el LB.
+
+Puedo observar que un LoadBalancer es una extension de un NodePort,y que el NodePort es una extension del ClusterIP,son todo capas de abstracción.
+Queda todo bien claro.Seguir investigando más
+
 
 
 

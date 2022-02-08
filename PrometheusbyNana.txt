@@ -115,3 +115,259 @@ Los operators son creados normalmente por equipos con conocimientos TOP en ese t
 NOTA: recuerda que helm se instala con brew y está escrito en Go por motivos obvios.Una vez instalado helm instalo el operator:
 >helm install prometheus stable/prometheus-operator
 Seguir por la instalación mañana
+
+IMPORTANTE: ha cambiado la instalación,ahora es con un helm Chart:
+https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+>helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+>helm repo update
+$ helm install [RELEASE_NAME] prometheus-community/kube-prometheus-stack
+
+PAra desinstalar
+$ helm uninstall [RELEASE_NAME]
+* CRDs created by this chart are not removed by default and should be manually cleaned up:
+
+kubectl delete crd alertmanagerconfigs.monitoring.coreos.com
+kubectl delete crd alertmanagers.monitoring.coreos.com
+kubectl delete crd podmonitors.monitoring.coreos.com
+kubectl delete crd probes.monitoring.coreos.com
+kubectl delete crd prometheuses.monitoring.coreos.com
+kubectl delete crd prometheusrules.monitoring.coreos.com
+kubectl delete crd servicemonitors.monitoring.coreos.com
+kubectl delete crd thanosrulers.monitoring.coreos.com
+
+						QUE ES LO QUE HE INSTALADO
+
+Puedo ver que crea 6 pods,8 Services,3 Deployment 3 replicaSet,2 StatefulSet..
+
+Empezaremos por los StatefulSet,pues son lo más importante:
+NAME                                                                    READY   AGE
+statefulset.apps/alertmanager-prometheus-kube-prometheus-alertmanager   1/1     89s
+statefulset.apps/prometheus-prometheus-kube-prometheus-prometheus       1/1     89s
+
+El segundo es prometheus en si mismo,manejado por el operador.El primero es el alertManager,encargado de las alertas.
+
+En cuanto a los deployments,veré tres,de nuevo el core de prometheus gestionado por el operador tiene uno,el otro es para Grafana y el otro es para métricas.Scraperará el cluster,lo cual es muy útil pues me monitoriza la infraestructura actual del cluster donde despliegue Prometheus:
+
+deployment.apps/prometheus-grafana                    1/1     1            1           92s
+deployment.apps/prometheus-kube-prometheus-operator   1/1     1            1           92s
+deployment.apps/prometheus-kube-state-metrics         1/1     1            1           92s
+
+También puedo ver un DaemonSet.Un DaemonSet es un componente que se ejecuta en cada Worker Node(es un feature principal).Este DaemonSet traduce las métricas de los Worker Nodes a Prometheus Metrics.
+
+Los Pods obviamente vienen creados por los Deployments y los StatefulSets en cuanto a los Services simplemente darán la conectividad necesaria.
+NOTA:puedo ver que algunos pods están replicados
+
+IMPORTANTE: al instalar esto con el operator ya he configurado el cluster para monitorización,asi que desde ya puedo analizar todo esto.Si miro los configMaps veré 15 o 20(casi todos creados por el operator):
+kube-root-ca.crt                                               1      6d19h
+mongodb-configmap                                              1      5d16h
+prometheus-grafana                                             1      16m
+prometheus-grafana-config-dashboards                           1      16m
+prometheus-grafana-test                                        1      16m
+prometheus-kube-prometheus-alertmanager-overview               1      16m
+prometheus-kube-prometheus-apiserver                           1      16m
+prometheus-kube-prometheus-cluster-total                       1      16m
+prometheus-kube-prometheus-controller-manager                  1      16m
+prometheus-kube-prometheus-etcd                                1      16m
+prometheus-kube-prometheus-grafana-datasource                  1      16m
+prometheus-kube-prometheus-k8s-coredns                         1      16m
+prometheus-kube-prometheus-k8s-resources-cluster               1      16m
+prometheus-kube-prometheus-k8s-resources-namespace             1      16m
+prometheus-kube-prometheus-k8s-resources-node                  1      16m
+prometheus-kube-prometheus-k8s-resources-pod                   1      16m
+prometheus-kube-prometheus-k8s-resources-workload              1      16m
+prometheus-kube-prometheus-k8s-resources-workloads-namespace   1      16m
+prometheus-kube-prometheus-kubelet                             1      16m
+prometheus-kube-prometheus-namespace-by-pod                    1      16m
+prometheus-kube-prometheus-namespace-by-workload               1      16m
+prometheus-kube-prometheus-node-cluster-rsrc-use               1      16m
+prometheus-kube-prometheus-node-rsrc-use                       1      16m
+prometheus-kube-prometheus-nodes                               1      16m
+prometheus-kube-prometheus-persistentvolumesusage              1      16m
+prometheus-kube-prometheus-pod-total                           1      16m
+prometheus-kube-prometheus-prometheus                          1      16m
+prometheus-kube-prometheus-proxy                               1      16m
+prometheus-kube-prometheus-scheduler                           1      16m
+prometheus-kube-prometheus-statefulset                         1      16m
+prometheus-kube-prometheus-workload-total                      1      16m
+
+Lo mismo para los Secrets.Obviamente configurar esto manualmente es inviable.
+NOTA: otros recursos que se han creado son los CRDs.CRD stands for Custom Resource Definitions:
+oscar@acer-linux:~$ k get crd -o wide
+NAME                                        CREATED AT
+alertmanagerconfigs.monitoring.coreos.com   2022-02-06T13:14:06Z
+alertmanagers.monitoring.coreos.com         2022-02-06T13:14:06Z
+podmonitors.monitoring.coreos.com           2022-02-06T13:14:06Z
+probes.monitoring.coreos.com                2022-02-06T13:14:06Z
+prometheuses.monitoring.coreos.com          2022-02-06T13:14:06Z
+prometheusrules.monitoring.coreos.com       2022-02-06T13:14:06Z
+servicemonitors.monitoring.coreos.com       2022-02-06T13:14:06Z
+thanosrulers.monitoring.coreos.com          2022-02-06T13:14:06Z
+
+Puedo ver más de cerca que ha creado el statefulset guardando su description a un file temporalmente:
+ k describe statefulset prometheus-prometheus-kube-prometheus-prometheus > prom.yaml
+Y lo mismo para el deployment del operator,que es muy interesante:
+k describe deployment <name> > operator.yaml
+Si leo este file veré que es el orquestador de todo el stack,lo cual es lógico pues es el operator.
+Lo importante de todo lo que dice Nana es entender como agregar o editar alert rules y como ajustar la configuración de Prometheus(añadir nuevos endpoints para que scrapee)
+
+							ACCESING GRAFANA UI 
+
+Si miro los servicios veré que es un ClusterIP,asi que está cerrado.Vamos a hacer un port-forward:
+>kubectl get deployments
+prometheus-grafana                    1/1     1            1           39m
+>k get pods
+prometheus-grafana-f4796bddc-pdbvs                       3/3     Running   0   
+
+Fijate que hay 3,asi que tengo que decirle cual(con la flag -c de choose):
+
+oscar@acer-linux:~$ k logs prometheus-grafana-f4796bddc-pdbvs 
+error: a container name must be specified for pod prometheus-grafana-f4796bddc-pdbvs, choose one of: [grafana-sc-dashboard grafana-sc-datasources grafana]
+
+>k logs prometheus-grafana-f4796bddc-pdbvs -c grafana 
+Hay que coger el grafana.Alli veré que el user es 'admin' y el port el 3000
+
+t=2022-02-06T13:14:21+0000 lvl=info msg="Created default admin" logger=sqlstore user=admin
+t=2022-02-06T13:14:21+0000 lvl=info msg="Created default organization" logger=sqlstore
+t=2022-02-06T13:14:21+0000 lvl=info msg="Initialising plugins" logger=plugin.manager
+t=2022-02-06T13:14:21+0000 lvl=info msg="Plugin registered" logger=plugin.manager pluginId=input
+t=2022-02-06T13:14:21+0000 lvl=info msg="Live Push Gateway initialization" logger=live.push_http
+t=2022-02-06T13:14:21+0000 lvl=info msg="HTTP Server Listen" logger=http.server address=[::]:3000 protocol=http subUrl= socket=
+
+Ahora que ya sé que quiero forwardear el puerto 3000 del pod hacia afuera tipeo:
+k port-forward deployment/<name> 3000 <- esto abre el 3000 del pod.
+
+NOTA:el usuario será admin y la password 'prom-operator'
+Fijate que podré ver métricas como la CPU,la RAM,la bandwidth de cada pod,nodo,por namespace,etc...
+
+						PROMETHEUS UI
+
+Aparte de Grafana UI Prometheus también tiene otra UI accesible de igual manera mediante port-forward:
+ k port-forward prometheus-prometheus-kube-prometheus-prometheus-0 9090
+
+Prometheus UI puede ser interesante también en determinadas ocasiones.
+Resumen: hemos visto como desplegar Prometheus usando Helm + operator.Hemos visto una brief overview de todo lo que instala y hemos visto como acceder a las UIs de monitorización mediante port-forward.
+
+		PARTE DOS STEPS TO MONITOR THIRD-PARTY APPS USING PROMETHEUS EXPORTER
+
+Source: https://www.youtube.com/watch?v=mLPg49b33sA&ab_channel=TechWorldwithNana
+
+Antes que nada crearemos otro cluster mas grande.Haremos el despliegue de un MongoDB y de un MongoDB Exporter para que exponga las métricas.
+
+Despues habrá que permitir que PROMETHEUS las haga pull,para ello usaremos otro componente llamado ServiceMonitor.
+
+Iremos poco a poco,viendo cada paso en Prometheus UI y Grafana UI.
+Para crear otro cluster es con -p <clustername>(la p es de profile):
+>minikube start --nodes 2 --cpus 4 --memory 8192 -p multinode <- creará otro cluster llamado multinode con dos nodos,4cpus y 8GB de RAM
+NOTA:fijate que ahora para habilitar addons tengo que usar -p también:
+>minikube addons list <- ojo,solo muestra para el cluster por defecto
+> minikube addons -p multinode list <- 
+
+Fijate que cada profile es un cluster.Bien una vez iniciado un cluster con más recursos,ya que Prometheus usa un montón de componentes,puedo continuar.
+
+>helm ls <- puedo ver lo instalado con helm con ls
+
+Lo primero será exponer a Prometheus UI(fijate que el service ya me dice el puerto,asinto):
+prometheus-kube-prometheus-prometheus     10.244.1.8:9090                                   3m14s
+Luego:
+k port-forward service/<svc_name> 9090:9090
+
+En Prometheus UI puedo hacer click en status/targets y ver los targets actuales que está scrapeando.
+
+* Puedo ver los servicemonitor a los que se está escrapeando con k get servicemonitor.Es un custom component.
+
+$ k get servicemonitor
+NAME                                                 AGE
+prometheus-grafana                                   11m
+prometheus-kube-prometheus-alertmanager              11m
+prometheus-kube-prometheus-apiserver                 11m
+prometheus-kube-prometheus-coredns                   11m
+prometheus-kube-prometheus-kube-controller-manager   11m
+prometheus-kube-prometheus-kube-etcd                 11m
+prometheus-kube-prometheus-kube-proxy                11m
+prometheus-kube-prometheus-kube-scheduler            11m
+prometheus-kube-prometheus-kubelet                   11m
+prometheus-kube-prometheus-operator                  11m
+prometheus-kube-prometheus-prometheus                11m
+prometheus-kube-state-metrics                        11m
+prometheus-prometheus-node-exporter                  11m
+
+
+Veamos el yaml de uno de ellos:
+k get servicemonitor -o wide <servicemonitor> -o yaml > file.yaml
+
+Puedo ver la apiVersion y el kind:
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+O que expone /metrics:
+    path: /metrics
+    port: http-web
+    scheme: http
+    scrapeTimeout: 30s
+
+NOTA: hay una prop muy importante que es metadata.labels.release: prometheus.Permite a Prometheus descubrir el servicemonitor en el cluster y registrarlo para escrapearlo.
+Prometheus creará un crd.Si hace match con algun ServiceMonitor lo escrapeará.
+
+				CREATING  MONGODB DEPLOY + SRV
+
+Copio de su Gitlab el yaml:
+https://gitlab.com/nanuchi/youtube-tutorial-series/-/blob/master/prometheus-exporter/mongodb.yaml
+Hora de desplegar el exporter
+
+NOTA:cada aplicación tiene su propio exporter.Recuerda que el exporter hace dos cosas,colecciona las métricas y las convierte al formato adecuado para Prometheus y la segunda es que expone el endpoint /metrics
+
+Perfectamente puede ser un deployment separado en el mismo cluster,lo cual es bastante cómodo,pues cuando me canse de él simplemente borro el deployment.
+
+IMPORTANTE:puedp ver ya un pod con un exporter,que es el que está exponiendo el cluster actual ya.
+prometheus-prometheus-node-exporter-7xm4t                1/1     Running   0          31m <- éste!
+
+IMPORTANTE: los exporters también están como Docker Images,lo cual va a ser más comodo que usar ese repositorio.Busco por mongodb-exporter y veré el de bitnami que parece muy reliable.
+
+					COMPONENTS OF A EXPORTER
+
+Un exporter tiene tres componentes,la aplicación en sí,un Service para conectar con el Exporter y un ServiceMonitor,que recordemos que era un componente para poder ser descubierto por un crd.
+En resumen,puedo crear un file con estos tre componentes(Deployment + Service + SrviceMonitor) o puedo buscar por un Helm Chart que ya tenga esto configurado
+
+Busco por mongodb-exporter helm chart y llegaré al repo oficial:
+Me pide esto
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+
+NOTA: recuerda que para poder sobreescribir parametros en un helm chart tengo que sar los 'helm parameters'.Puedo usar el comando <helm show values [chart name]> para ver las variables que puedo usar en una helm chart
+
+>helm show values prometheus-community/prometheus-mongodb-exporter
+
+Recuerda que los puedo guardar a un file temporal,de echo es lo que debí haber echo:
+>helm show values prometheus-community/prometheus-mongodb-exporter > temp.yaml
+
+Ahora hay un par de cosas que hay que cambiar.La MongoURI viene vacia en nuestro caso sera mongodb://<serviceName>:27017.Y aparte habia que añadir la label 'release: prometheus' para que Prometheus descubra nuevos ServiceMonitor en el cluster.Recuerda que cuando suceda eso creará un nuevo crd.
+Obviamente nos dan la helm chart limpia en este sentido.
+Al final quedará así:
+
+mongodb:
+  uri: "mongodb://mongodb-service:27017"
+
+serviceMonitor:
+  additionalLabels: 
+    release: prometheus
+
+Ya puedo instalarlo,pero ojo que va con el file anterior:
+helm install <release name> <chartname> -f file.yaml (release name el que quiera)
+
+Puedo ver un nuevo helm chart con <helm ls> y un nuevo pod,un nuevo service y un nuevo servicemonitor:
+NAME                                                 AGE
+mongodb-exporter-prometheus-mongodb-exporter         106s <- es el servicemonitor
+Si le saco el yaml veré la label(recuerda que sabo el yaml con get resource <resource_name> -o yaml):
+  release: prometheus <- viene del file
+Puedo hacer un port-forward del service a ver que veo en /metrics(veo las métricas en el formato ese)
+Y si voy a Prometheus UI veré un nuevo endpoint: serviceMonitor/default/mongodb-exporter-prometheus-mongodb-exporter/0 (1/1 up)
+NOTA:fijate que no se creó un crd,no es así,no era importante esto
+Por último lo veremos en Grafana,que además es la UI que más se usa.
+*hago el portforward...
+Desde luego mi conocimento de Kubernetes ha subido mucho.
+
+
+ 
+
+
+
+
+
