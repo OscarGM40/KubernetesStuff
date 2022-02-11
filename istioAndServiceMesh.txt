@@ -1,0 +1,261 @@
+					 EKSCTL Y EKS EN AWS BREVE INTRO
+
+NOTA: para crear clusters en AWS se usa su módulo EKS,que es un servicio autogestionado para Kubernetes(Elastic Kubernetes Service).
+
+Sin embargo,dado que en AWS crear un  cluster implica crear roles IAM apropiados,crear el master,crear instancias EC2 y agregarlas como Workers(además de crear un VPC,que es un Virtual Private Space) se suele usar una herramienta CLI externa que es capaz de interactuar con AWS usando el user actual registrado en el sistema
+
+La herramienta se llama eksctl(es una simple CLi escrita en Go para crear clusters en EKS por el equipo llamado weaveworks).
+
+						INSTALL EKSCTL
+
+Con 'brew tap <repo>' añado repositorios de terceros al homebrew.Si quiero ver los repos usar brew tap a secas. 	
+brew tap weaveworks/tap
+brew install weaveworks/tap/eksctl <- esto instalará varias dependencias de AWS
+eksctl version <- debería ver la version confirmando que se ha instalado
+
+* Ahora,con un usuario AWS con los permisos necesarios registrado en el sistema
+eksctl create cluster <options>
+Y para borrar un cluster:
+eksctl delete cluster <options>
+Ver video si es necesario (https://www.youtube.com/watch?v=p6xDCz00TxU&ab_channel=TechWorldwithNana)
+
+Y aqui el de Redis(https://www.youtube.com/watch?v=OqCK95AS-YE&ab_channel=TechWorldwithNana)
+
+					  ISTIO AND SERVICE MESH
+
+Source: https://www.youtube.com/watch?v=16fgzklcF7Y&ab_channel=TechWorldwithNana
+
+Istio es un Service Mesh(malla o red de Services,recuerda que un Service en Microservices gestiona las Ips y el LoadBalancing del tráfico).
+
+Mediante la implementacíon de un service mesh pues controlaréla comunicación entretodos los microservicios del cluster.
+
+Para entender porqué nació y/o es necesario Istio y las Service Mesh es fundamental entender los desafíos que presenta implementar una arquitectura de microservicios.
+
+Cuando se crea una app,por ejemplo un ecommerce crearé varios MS(Microservices).Cada uno tiene su propia Business Logic(BL).Cuando un usuario realice una accion un MS se comunicará con otro MS,éste a su vez con otro,y seguramente también con otro MS que será la DB,es obvio pues que la comunicación es un pilar fundamental en MS
+
+Para gestionar esta comunicación cada MS ofrece un endpoint para que se comuniquen con él.Cada vez que se añada un MS nuevo habrá que configurar un endpoint para él y comunicarlo al resto de MS
+
+Desde un punto de vista de la seguridad,esto no es seguro(pues los MS se comunicarán a través de esos endpoints bajo HTTP en ese cluster,y es un protocolo no seguro.
+Además,pueden comunicarse con todos,pues todos los endpoints están abiertos
+
+En aplicaciones grandes e importantes,como bancarias,o con mucho tráfico de usuarios un nivel de seguridad más alto es requerido e imprescindible.
+
+IMPORTANTE: también se necesita algún tipo de lógica para reintentar las comunicaciones.Esto también es un downside con la comunicación http abierta por todos que se establece por defecto.
+También es importante monitorizar las métricas de cada MS,para comprobar el tráfico de entrada o salida,pudiendo detectar cuellos de botella(bottlenecks),etc..
+
+Cada equipo de developers tendrá que configurar todo esto,perdiendo un tiempo que podrían dedicar a la lógica y desarrollo de la app.
+Además añade complejidad a cada MS
+
+			SOLUCION: SERVICE MESH WITH SIDECAR PATTERN
+
+La solución es usar alguna herramienta que automatice estas configuraciones.Mediante el patrón Sidecar la aplicacion de terceros Service Mesh es la solución.
+
+Usará operators(software) en el cluster para configurar todo de forma sencilla.
+Dejará en cada MS un Proxy(el Sidecar) que configura todo(el endpoint,la seguridad,la lógica de retries para posibles fallos, métricas,tracing o seguimiento de las peticiones,...).Desde luego es una ayuda increíble.
+
+NOTA: ni siquiera hay que ir MS por MS inyectando el Sidecar.El Control Plane inyectará el Sidecar Proxy en cada Microservice	
+Una vez inyectados los MS pueden hablar mediante estos Proxies.
+NOTA:se creará pues una Network Layer entre los Proxies y el ControlPlane
+
+				CORE FEATURE : TRAFFIC SPLITTING
+
+Una caracteristica muy usada en Microservices es el desvío del tráfico.Imagina que sacamos una nueva versión del Payment Service(la 3.0) y la desplegamos a producción.
+Es obvio que no podremos estar seguros de que no haya ningún BUG.Si lo hubiera podría costar a la compañia un montón de dinero.
+Asi pues tiene mucho sentido sólo el 10% del tráfico de la app a esta versión del Payments Service,y gestionar el 90% con la versión 2.0,que sabemos que funciona.
+
+Con Service Mesh se puede configurar rápidamente el traffic splitting de un Microservice en concreto( a todo esto se le conoce como el Canary Deployment)
+
+								ISTIO ARQUITECTURE
+
+Ya hemos mencionado que Service Mesh no es más que un patrón o paradigma.Istio es simplemente una implementacíon de él.
+
+Con Istio los Sidecar usarán Envoy(Envoy proxies).Es otro proyecto independiente open-source que usan tanto Istio como otras implementaciones del patrón Service Mesh.
+El Master o ControlPlane que creará Istio se llama Istiod,y controlará e inyectará los Envoy Proxies
+NOTA: antes de la versión 1.5 de Istio,Istio se formaba mediante un montón de componentes(Pilot,Gallery,Citadel,Mixer,...)
+Pero despues de esta versión todos estos componentes se han juntado en el ControlPlane anterior,el Istiod,para facilitar a los operators configurar y operar Istio
+
+IMPORTANTE: y junto con el ControlPlane Istiod se creará un DataPlane que constiste en el conjunto de todos los EnvoyProxies(en la red o malla).
+
+							CONFIGURAR ISTIO
+
+Ya hemos recalcado que no vamos a ajustar nosotros los Deployment y Service yaml files.Lo hará Istio todo.
+Lo bueno es que Istio es configurado usando los típicos Kubernetes yaml files,pues Istio usa un componente CRD( Custom Resource Definition).
+Los CRD extienden de la Kubernetes API,son componentes custom para tecnologías de terceros(como Istio,Prometheus,..) a los que k8s da soporte oficial.Por ello pueden ser usados como cualquier componente nativo de k8s
+
+Asi pues simplemente crearé un file yaml y lo aplicaré con kubectl apply -f.
+
+NOTA: suelen usarse varios files que obviamente crearán varios CRDS para configurar Istio
+Hay dos CRDs core:
+VirtualService: configura como enrutar el tráfico a un determinado destino
+DestinationRule: configura que le sucede al tráfico una vez llegue a ese destino mediante políticas o reglas determinadas
+
+En resumen creamos estos CRDs,Istiod convierte estas reglas de enrutamiento de alto nivel en configuraciones especificas para cada Envoy Proxy y por último estas configuraciones son propagadas en los SidecarProxies.
+
+IMPORTANTE: una vez propagados y configurados los proxies ya no necesitan a Istiod para nada,son completamente autónomos	
+
+					DYNAMIC SERVICE DISCOVERY
+
+Istio tiene también un registro interno para Services y sus endpoints.Cuando un nuevo MS se despliegue Istio automáticamente lo descubrirá y registrará
+
+					CERTIFICATE MANAGEMENT
+
+En adicción a este Discovery Service que trae Istio por defecto también tiene un gestor de certificados,generando certificados para todos los MS en el cluster para asegurar comunicación TLS
+
+				METRICS  AND TRACING DATA
+
+Istio también almacena telemetría de los Envoy Proxies para monitorizarla por ejemplo con Prometheus
+
+					ISTIO INGRESS GATEWAY
+
+Istio tiene otro componente llamado Istio Ingress Gateway que básicamente es un entrypoint al cluster(puedo pensar en él como un nginx Ingress Controller alternativo).
+Este componente Istio Ingress Gateway correrá como un Pod en el cluster junto con un Service Load Balancer que le da la conectividad necesaria.
+Este Ingress Gateway dirigirá el tráfico a cada Microservice usando los VirtualServices 
+Para configurarlo se usa un file,ver imagen.
+
+El tráfico finalmente quedará asi: el user hace una request,que entrará por el Istio Ingress Gateway,éste Ingress evaluará mediante las Virtual Service rules como tiene que redirigir ese tráfico y finalmente lo enrutará hacia un Envoy proxy.
+El Envoy Proxi se comunicará con el Servide de ese MS usando localhost,y por ello accediendo al Pod.
+Imaginando que ese Pod quiere acceder a otro pod,se comunicará mediante su Service ,que se comunicará con el EnvoyProxy,el cual mediante VirtualServices,DestinationRules,... sabrá que hacer.
+Asi pues se comunicará con otro EnvoyProxy,que de nuevo sabe acceder al POD.
+
+Puedo ver perfectamente que implementar Istio es una mejora,ya que securiza las comunicaciones de un cluster.
+Además,hay que recordar que durante este proceso se colectarán métricas y se enviarán al ControlPlane,y que también tiene un servicio de Discovery.
+
+			VIDEO 02 IMPLEMENTING ISTIO IN K8S - STEP BY STEP GUIDE
+
+Instalaremos Istio core e Istiod en Kubernetes.
+Despues instalaremos Istio Addons para monitoring,tracing & visualization
+Configuraremos la inyección automatica de los Envoy Proxy
+Desplegaremos una aplicación de ejemplo en el cluster
+
+Con un cluster local nos será suficiente,asi que usaremos minikube.
+
+PASO 1:crear o arrancar un cluster con más recursos
+minikube start --cpus 4 --memory 8192 -p <name>
+
+PASO DOS: instalar Istio(web aqui: https://istio.io/latest/docs/setup/getting-started/).Puedo ir a las releases o usar curl,..
+
+PASO TRES: creo un directorio para istio en el home y muevo alli la descarga.La descomprimo,alli veré varios folder,el que nos interesa es el de los binarios.
+
+PASO CUATRO: necesitamos la herramienta CLI istioctl,para ello hay que editar el PATH,agregando la ruta al folder con el binario
+>echo $PATH <- para ver lo que tengo en el path
+>export PATH=$PATH:/home/oscar/istio-installlation/istio-1.12.2/bin  <- agregar al PATH una ruta
+
+Otra forma era con export PATH=$PWD/bin:$PATH(ubicandome correctamente)
+
+NOTA:esto sólo vale para la terminal actual donde ejecute export 
+Ahora debería poder usar 'istioctl' y tener visión sobre la cli.
+
+PASO CINCO: instalar Istio mediante la istioctl en el cluster
+>istioctl install(dar que si)
+
+$ istioctl install
+This will install the Istio 1.12.2 default profile with ["Istio core" "Istiod" "Ingress gateways"] components into the cluster. Proceed? (y/N) y
+ Istio core installed                                                             Istiod installed                                                                 Ingress gateways installed                                                       Installation complete   
+
+Puedo ver que instala el control-plane istiod,el Ingress Gateway y el core.Además creará un namespace:
+oscar@acer-linux:~/istio-installation/istio-1.12.2$ k get ns
+NAME              STATUS   AGE
+default           Active   2d16h
+ingress-nginx     Active   2d15h
+istio-system      Active   2m24s
+kube-node-lease   Active   2d16h
+kube-public       Active   2d16h
+kube-system       Active   2d16h
+
+Puedo ver los pods en base a ese namespace:
+oscar@acer-linux:~/istio-installation/istio-1.12.2$ k get pod -n istio-system
+NAME                                    READY   STATUS    RESTARTS   AGE
+istio-ingressgateway-58fc6965b5-f5qcb   1/1     Running   0          2m45s
+istiod-6d6f7cb5bc-l5w2j                 1/1     Running   0          2m55s
+
+PASO SEIS: Para poder ver a Istio funcionando vamos a instalar un proyecto de demostración.
+https://github.com/GoogleCloudPlatform/microservices-demo/tree/main/release
+Copio el manifest.yaml y lo aplico
+IMPORTANTE: esto puede tardar un rato,y además,Istio no va a inyectar los Sidecar Proxies implicitamente!.Lo tengo que especificar yo
+
+PASO SIETE: configurar el envio de los Envoy Proxies.La forma de hacerlo es agergar a un namespace la label 'istio-injection=enabled'.
+Dado que tengo todo desplegado en el namespace 'default' es éste al que voy a agregar otra label.
+Pero primero veamos como ver las labels que ya tiene(--show-labels)
+>k get ns default --show-labels
+
+$ k get ns default --show-labels
+NAME      STATUS   AGE     LABELS
+default   Active   2d16h   <none> <- puedo ver que no tiene ninguna,asinto
+
+Para agregar una label a un namespace se usa (k label <resource> <resource_name> key=value).Luego:
+kubectl label namespace default istio-injection=enabled
+
+>k label namespace default istio-injection=enabled
+namespace/default labeled
+
+Esto es algo que Istio entenderá.Pero para que tome efecto tengo que re-desplegar todo.La forma más fácil es con k delete -f apuntando al file:
+>k delete -f kubernetes-manifest.yaml
+
+NOTA:fijate que no he tenido que configurar nada,sólo agregar una label.Istiod configurará todo por mi.
+
+Si ahora aplico todo veré que no se levanta uno,sino dos pods:
+oscar@acer-linux:~$ k get pod
+NAME                                                            READY   STATUS    RESTARTS   AGE
+adservice-5574d7d67d-rp9l6                                      1/2     Running   0          55s
+alertmanager-prometheus-kube-prometheus-alertmanager-0          2/2     Running   0          26m
+cartservice-6b4b88f4d6-jh95s                                    2/2     Running   0          56s
+checkoutservice-74b65ddfb-bfgl7                                 2/2     Running   0          56s
+currencyservice-56f59dcd48-r4lmn                                2/2     Running   0          55s
+emailservice-5584c7c84d-g8nqm                                   2/2     Running   0          56s
+frontend-66f5ff544b-w4j2c                                       2/2     Running   0          56s
+
+Puedo describir cualquier pod y veré el Proxy(la imagen que usó):
+Init Containers:
+  istio-init:
+    Container ID:  docker://fe18ec8c925cc5105d5685de5e674dd5e8284ddd7e0b97fd1300a2b4b2ccd39f
+    Image:         docker.io/istio/proxyv2:1.12.2
+    Image ID:      docker-pullable://istio/proxyv2@sha256:f26717efc7f6e0fe928760dd353ed004ea35444f5aa6d41341a003e7610cd26f <- éste es el proxy
+
+Esto confirma que Istio ha inyectado el Proxy.
+
+PASO OCHO: instalar addons para monitorización,tracing y visualization.Ahora que hemos instalado Istio,inyectado los proxies en cada Pod de ese namespace no tenemos ninguna herramienta para visualización(recuerda que Istio colecciona telemetría automáticamente).
+Necesitamos algo para ver esas métricas.Aqui es donde entran los addons(puedo integrar Istio con Prometheus,Jaeger,Grafana,Kiali,Zipkin o cert-manager).
+
+NOTA:esto actualmente es muy fácil.En el folder de Istio aparte de /bin tengo un subfolder 'samples'. En él tengo además addons.Si entro a él veré 	todos los archivos yaml de configuración para integrar Istio con estos servicios.
+Simplemente tengo que aplicarlos,puedo aplicarlos uno por uno o todos a lavez:
+k apply -f sample/addons <- si apunto al folder busca todos los yaml
+
+Una vez aplicado lo que desee puedo ver estos nuevos pods en el namespace de istio:
+oscar@acer-linux:~$ k get pod -n istio-system
+NAME                                    READY   STATUS    RESTARTS   AGE
+grafana-cf9797cf8-zm7ff                 1/1     Running   0          81s
+istio-ingressgateway-58fc6965b5-f5qcb   1/1     Running   0          38m
+istiod-6d6f7cb5bc-l5w2j                 1/1     Running   0          38m
+jaeger-5f65fdbf9b-mxht9                 1/1     Running   0          70s
+kiali-79866d6f79-bv84k                  1/1     Running   0          63s
+prometheus-8945b4d5-gb5nl               2/2     Running   0          55s
+
+Obviamente para acceder siempre va a ser con los Services:
+oscar@acer-linux:~$ k get svc -n istio-system
+NAME                   TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)                                      AGE
+grafana                ClusterIP      10.106.61.214    <none>        3000/TCP                                     2m10s
+istio-ingressgateway   LoadBalancer   10.102.186.56    <pending>     15021:32026/TCP,80:32435/TCP,443:32284/TCP   38m
+istiod                 ClusterIP      10.98.79.7       <none>        15010/TCP,15012/TCP,443/TCP,15014/TCP        39m
+jaeger-collector       ClusterIP      10.97.18.89      <none>        14268/TCP,14250/TCP,9411/TCP                 119s
+kiali                  ClusterIP      10.111.109.17    <none>        20001/TCP,9090/TCP                           112s
+prometheus             ClusterIP      10.103.67.205    <none>        9090/TCP                                     104s
+tracing                ClusterIP      10.108.213.41    <none>        80/TCP,16685/TCP                             119s
+zipkin                 ClusterIP      10.110.205.117   <none>        9411/TCP                                     119s
+Puedo ir uno por uno haciendole port-forwarding y ver lo que ofrece en el navegador.
+NOTA: jaeger es un servicio para el tracing de las requests(recuerda que en MS las request pasan por muchos MS). Por otra parte Zipkin es una alternativa a Jaeger.
+Por último kiali es el preferido de Nana ya que tiene una herramienta de visualización increíble ademas de muchas features para configurar la comunicación entre los MS.También incluye la monitorización y el tracing,asi que tiene todo en una única tool.Veamos kiali primero.
+
+>k port-forward service/kiali -n istio-system 20001 <- ojo con el namespace
+** Puedo ver que tengo 15 aplicaciones en el namespace default,6 en el namespace istio-system y si hago click en ellas veré su salud,si tienen el sidecar
+
+La feature más cool es la opción Graph,donde veré toda la Network del namespace.Sólo viendo este gráfico puedo hacerme una idea de lo que hay en el cluster.
+Veré por donde entran las requests y el camino que deben seguir.Es increíble esta herramienta.
+En la opción Services puedo ver el tráfico,Inbound Metrics y Traces.
+
+FINAL SUGGESTION:para que funcione la opción Graph los manifiestos de configuración deben usar la key 'app' como label(supongo que por eso lo usan masivamente):
+
+labels:
+  app: emailservice
+
+Cuando despliegue un pod en un cluster con Istio debo usar esta label para que funcione la data visualization.Lo mejor es acostumbrarse desde ya.
+
